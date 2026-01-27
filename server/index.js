@@ -1,0 +1,910 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const { sequelize } = require('./config/database');
+const authRoutes = require('./routes/auth');
+const arrivalsRoutes = require('./routes/arrivals');
+const recordsRoutes = require('./routes/records');
+const locationsRoutes = require('./routes/locations');
+const exportRoutes = require('./routes/export');
+const ledgerRoutes = require('./routes/ledger');
+const outturnsRoutes = require('./routes/outturns');
+const byproductsRoutes = require('./routes/byproducts');
+const outturnExportRoutes = require('./routes/outturn_export');
+const dateExportRoutes = require('./routes/date_export');
+const dashboardRoutes = require('./routes/dashboard');
+const packagingsRoutes = require('./routes/packagings');
+const riceProductionsRoutes = require('./routes/rice-productions');
+const { router: purchaseRatesRoutes } = require('./routes/purchase-rates');
+const hamaliRatesRoutes = require('./routes/hamali-rates');
+const hamaliEntriesRoutes = require('./routes/hamali-entries');
+const hamaliBookRoutes = require('./routes/hamali-book');
+const statusRoutes = require('./routes/status');
+const paddyHamaliRatesRoutes = require('./routes/paddy-hamali-rates');
+const paddyHamaliEntriesRoutes = require('./routes/paddy-hamali-entries');
+const riceHamaliRatesRoutes = require('./routes/riceHamaliRates');
+const riceHamaliEntriesRoutes = require('./routes/riceHamaliEntries');
+const riceHamaliEntriesSimpleRoutes = require('./routes/riceHamaliEntriesSimple');
+const metricsRoutes = require('./routes/metrics');
+const riceStockRoutes = require('./routes/rice-stock');
+const riceStockManagementRoutes = require('./routes/riceStockManagement');
+const riceStockVarietiesRoutes = require('./routes/rice-stock-varieties');
+const yieldRoutes = require('./routes/yield');
+const adminUsersRoutes = require('./routes/admin-users');
+const unifiedVarietiesRoutes = require('./routes/unified-varieties');
+
+const compression = require('compression');
+const performanceMonitor = require('./middleware/performanceMonitor');
+const { queryTimingMiddleware } = require('./middleware/querySafety');
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+// Performance monitoring (tracks response times)
+app.use(performanceMonitor);
+
+// Query timing warnings for slow requests (10 lakh record safety)
+app.use(queryTimingMiddleware);
+
+// Performance: Enable gzip compression
+app.use(compression({
+  level: 6, // Compression level (0-9, 6 is good balance)
+  threshold: 1024, // Only compress responses larger than 1KB
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    return compression.filter(req, res);
+  }
+}));
+
+// Security middleware
+app.use(helmet());
+
+// CORS Configuration - Support multiple origins
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'https://complete-paddy-rice-management-syst.vercel.app',
+  'https://complete-paddy-rice-management-system.vercel.app',
+  process.env.CLIENT_URL
+].filter(Boolean).map(url => {
+  // Strip any trailing paths (like /login) from URLs
+  try {
+    const urlObj = new URL(url);
+    return `${urlObj.protocol}//${urlObj.host}`;
+  } catch {
+    return url;
+  }
+});
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('❌ CORS blocked origin:', origin);
+      console.log('✅ Allowed origins:', allowedOrigins);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'Pragma']
+}));
+
+// Rate limiting - Increased for development
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10000 // limit each IP to 10000 requests per windowMs (increased for development)
+});
+app.use(limiter);
+
+// Body parsing middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/arrivals', arrivalsRoutes);
+app.use('/api/records', recordsRoutes);
+app.use('/api/locations', locationsRoutes);
+app.use('/api/export', exportRoutes);
+app.use('/api/export/pdf/outturn', outturnExportRoutes);
+app.use('/api/export/date', dateExportRoutes);
+app.use('/api/ledger', ledgerRoutes);
+app.use('/api/outturns', outturnsRoutes);
+app.use('/api/byproducts', byproductsRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/packagings', packagingsRoutes);
+app.use('/api/rice-productions', riceProductionsRoutes);
+app.use('/api/purchase-rates', purchaseRatesRoutes);
+app.use('/api/hamali-rates', hamaliRatesRoutes);
+app.use('/api/hamali-entries', hamaliEntriesRoutes);
+app.use('/api/hamali-book', hamaliBookRoutes);
+app.use('/api/status', statusRoutes);
+app.use('/api/paddy-hamali-rates', paddyHamaliRatesRoutes);
+app.use('/api/paddy-hamali-entries', paddyHamaliEntriesRoutes);
+app.use('/api/rice-hamali-rates', riceHamaliRatesRoutes);
+app.use('/api/rice-hamali-entries', riceHamaliEntriesRoutes);
+app.use('/api/rice-hamali-entries-simple', riceHamaliEntriesSimpleRoutes);
+app.use('/api/other-hamali-works', require('./routes/otherHamaliWorks'));
+app.use('/api/other-hamali-entries', require('./routes/otherHamaliEntries'));
+app.use('/api/metrics', metricsRoutes);
+app.use('/api/rice-stock', riceStockRoutes);
+app.use('/api/rice-stock-management', riceStockManagementRoutes);
+app.use('/api', riceStockVarietiesRoutes); // Rice stock varieties API endpoints
+app.use('/api/yield', yieldRoutes);
+app.use('/api/admin', adminUsersRoutes);
+app.use('/api/unified-varieties', unifiedVarietiesRoutes);
+
+
+// Health check
+app.get('/api/health', async (req, res) => {
+  try {
+    // Test database connection
+    await sequelize.authenticate();
+
+    // Check if tables exist
+    const tables = await sequelize.getQueryInterface().showAllTables();
+
+    res.json({
+      status: 'OK',
+      message: 'Mother India Stock Management Server is running',
+      database: 'Connected',
+      tables: tables.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'ERROR',
+      message: 'Database connection failed',
+      error: error.message
+    });
+  }
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({
+    error: 'Something went wrong!',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+  });
+});
+
+// 404 handler
+app.use('*', (req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
+
+// Database connection and server start
+const startServer = async () => {
+  try {
+    // Test database connection
+    await sequelize.authenticate();
+    console.log('✅ Database connection established successfully.');
+
+    // Check if tables exist, if not create them
+    try {
+      const tables = await sequelize.getQueryInterface().showAllTables();
+
+      if (tables.length === 0) {
+        console.log('🔄 Empty database detected. Creating initial schema...');
+        // Force sync to create all tables on fresh database
+        await sequelize.sync({ force: false, alter: false });
+        console.log('✅ Initial database schema created.');
+      } else {
+        console.log('✅ Database ready (using migrations for schema management).');
+      }
+    } catch (syncError) {
+      console.log('⚠️ Schema check warning:', syncError.message);
+      console.log('✅ Proceeding with migrations...');
+    }
+
+    // Run migrations automatically
+    try {
+      console.log('🔄 Running migrations...');
+
+      // Migration 0: Fix rate type enum (cleanup)
+      try {
+        const fixRateTypeEnum = require('./migrations/fix_rate_type_enum');
+        await fixRateTypeEnum();
+      } catch (error) {
+        console.log('⚠️ Migration 0 warning:', error.message);
+      }
+
+      // Migration 1: Add linked shifting ID
+      try {
+        const { addLinkedShiftingId } = require('./migrations/add_linked_shifting_id');
+        await addLinkedShiftingId();
+      } catch (error) {
+        console.log('⚠️ Migration 1 warning:', error.message);
+      }
+
+      // Migration 2: Create opening balances table
+      try {
+        const createOpeningBalancesTable = require('./migrations/create_opening_balances_table');
+        const queryInterface = sequelize.getQueryInterface();
+        await createOpeningBalancesTable.up(queryInterface, sequelize.Sequelize);
+      } catch (error) {
+        console.log('⚠️ Migration 2 warning:', error.message);
+      }
+
+      // Migration 3: Update kunchinittu constraints
+      try {
+        const updateKunchinintuConstraints = require('./migrations/update_kunchinittu_constraints');
+        const queryInterface = sequelize.getQueryInterface();
+        await updateKunchinintuConstraints.up(queryInterface, sequelize.Sequelize);
+      } catch (error) {
+        console.log('⚠️ Migration 3 warning:', error.message);
+      }
+
+      // Migration 4: Create balance audit trails table
+      try {
+        const createBalanceAuditTrailsTable = require('./migrations/create_balance_audit_trails_table');
+        const queryInterface = sequelize.getQueryInterface();
+        await createBalanceAuditTrailsTable.up(queryInterface, sequelize.Sequelize);
+      } catch (error) {
+        console.log('⚠️ Migration 4 warning:', error.message);
+      }
+
+      // Migration 5: Add performance indexes
+      try {
+        const addPerformanceIndexes = require('./migrations/add_performance_indexes');
+        await addPerformanceIndexes.up();
+      } catch (error) {
+        console.log('⚠️ Migration 5 warning:', error.message);
+      }
+
+      // Migration 6: Add fromOutturnId for purchase from production
+      try {
+        const addFromOutturnId = require('./migrations/add_from_outturn_id');
+        await addFromOutturnId();
+      } catch (error) {
+        console.log('⚠️ Migration 6 warning:', error.message);
+      }
+
+      // Migration 6.5: Create rice production tables
+      try {
+        const createRiceProductionTables = require('./migrations/create_rice_production_tables');
+        await createRiceProductionTables();
+      } catch (error) {
+        console.log('⚠️ Migration 6.5 warning:', error.message);
+      }
+
+      // Migration 7: Update rice production product types
+      try {
+        const updateRiceProductionProductTypes = require('./migrations/update_rice_production_product_types');
+        await updateRiceProductionProductTypes();
+      } catch (error) {
+        console.log('⚠️ Migration 7 warning:', error.message);
+      }
+
+      // Migration 8: Add rice production indexes
+      try {
+        const addRiceProductionIndexes = require('./migrations/add_rice_production_indexes');
+        await addRiceProductionIndexes();
+        console.log('✅ Migration 8: Rice production indexes added');
+      } catch (error) {
+        console.log('⚠️ Migration 8 warning:', error.message);
+      }
+
+      // Migration 9: Add unpolished to byproducts
+      try {
+        const addUnpolishedToByproducts = require('./migrations/add_unpolished_to_byproducts');
+        const queryInterface = sequelize.getQueryInterface();
+        await addUnpolishedToByproducts.up(queryInterface, sequelize.Sequelize);
+      } catch (error) {
+        console.log('⚠️ Migration 9 warning:', error.message);
+      }
+
+      // Migration 10: Fix net weight
+      try {
+        const fixNetWeight = require('./migrations/fix_net_weight');
+        const queryInterface = sequelize.getQueryInterface();
+        await fixNetWeight.up(queryInterface, sequelize.Sequelize);
+      } catch (error) {
+        console.log('⚠️ Migration 10 warning:', error.message);
+      }
+
+      // Migration 11: Create purchase rates table
+      try {
+        const createPurchaseRatesTable = require('./migrations/create_purchase_rates_table');
+        const queryInterface = sequelize.getQueryInterface();
+        await createPurchaseRatesTable.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 11: Purchase rates table created');
+      } catch (error) {
+        console.log('⚠️ Migration 11 warning:', error.message);
+      }
+
+      // Migration 12: Add RJ Rice 1 and RJ Rice 2 to byproducts
+      try {
+        const addRjRiceToByproducts = require('./migrations/add_rj_rice_to_byproducts');
+        const queryInterface = sequelize.getQueryInterface();
+        await addRjRiceToByproducts.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 12: RJ Rice columns added to byproducts');
+      } catch (error) {
+        console.log('⚠️ Migration 11 warning:', error.message);
+      }
+
+      // Migration 12: Add sute column to purchase rates
+      try {
+        const addSuteToPurchaseRates = require('./migrations/add_sute_to_purchase_rates');
+        const queryInterface = sequelize.getQueryInterface();
+        await addSuteToPurchaseRates.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 12: Sute column added to purchase rates');
+      } catch (error) {
+        console.log('⚠️ Migration 12 warning:', error.message);
+      }
+
+      // Migration 13: Create hamali rates table
+      try {
+        const createHamaliRatesTable = require('./migrations/create_hamali_rates_table');
+        const queryInterface = sequelize.getQueryInterface();
+        await createHamaliRatesTable.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 13: Hamali rates table created');
+      } catch (error) {
+        console.log('⚠️ Migration 13 warning:', error.message);
+      }
+
+      // Migration 14: Create hamali entries table
+      try {
+        const createHamaliEntriesTable = require('./migrations/create_hamali_entries_table');
+        const queryInterface = sequelize.getQueryInterface();
+        await createHamaliEntriesTable.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 14: Hamali entries table created');
+      } catch (error) {
+        console.log('⚠️ Migration 14 warning:', error.message);
+      }
+
+      // Migration 15: Add status to hamali entries
+      try {
+        const addStatusToHamaliEntries = require('./migrations/add_status_to_hamali_entries');
+        const queryInterface = sequelize.getQueryInterface();
+        await addStatusToHamaliEntries.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 15: Status added to hamali entries');
+      } catch (error) {
+        console.log('⚠️ Migration 15 warning:', error.message);
+      }
+
+      // Migration 16: Add unique kunchinittu name constraint
+      try {
+        const addUniqueKunchinintuName = require('./migrations/add_unique_kunchinittu_name');
+        const queryInterface = sequelize.getQueryInterface();
+        await addUniqueKunchinintuName.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 16: Unique kunchinittu name constraint added');
+      } catch (error) {
+        console.log('⚠️ Migration 16 warning:', error.message);
+      }
+
+      // Migration 17: Add loose movement type
+      try {
+        const addLooseMovementType = require('./migrations/add_loose_movement_type');
+        await addLooseMovementType();
+        console.log('✅ Migration 17: Loose movement type added');
+      } catch (error) {
+        console.log('⚠️ Migration 17 warning:', error.message);
+      }
+
+      // Migration 18: Add paddy bags deducted column
+      try {
+        const addPaddyBagsDeducted = require('./migrations/add_paddy_bags_deducted_column');
+        await addPaddyBagsDeducted.up();
+        console.log('✅ Migration 18: Paddy bags deducted column added');
+      } catch (error) {
+        console.log('⚠️ Migration 18 warning:', error.message);
+      }
+
+      // Migration 19: Update rate type enum
+      try {
+        const updateRateTypeEnum = require('./migrations/update_rate_type_enum');
+        const queryInterface = sequelize.getQueryInterface();
+        await updateRateTypeEnum.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 19: Rate type enum updated');
+      } catch (error) {
+        console.log('⚠️ Migration 19 warning:', error.message);
+      }
+
+      // Migration 20: Drop RAG system tables
+      try {
+        const dropRagTables = require('./migrations/drop_rag_tables');
+        const queryInterface = sequelize.getQueryInterface();
+        await dropRagTables.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 20: RAG system tables dropped');
+      } catch (error) {
+        console.log('⚠️ Migration 20 warning:', error.message);
+      }
+
+      // Migration 21: Update for-production to purchase
+      try {
+        const updateForProductionToPurchase = require('./migrations/update_for_production_to_purchase');
+        await updateForProductionToPurchase.up();
+        console.log('✅ Migration 21: For-production records updated to purchase');
+      } catch (error) {
+        console.log('⚠️ Migration 21 warning:', error.message);
+      }
+
+      // Migration 22: Add comprehensive performance indexes
+      try {
+        const addComprehensiveIndexes = require('./migrations/add_comprehensive_indexes');
+        await addComprehensiveIndexes.up();
+        console.log('✅ Migration 22: Comprehensive performance indexes added');
+      } catch (error) {
+        console.log('⚠️ Migration 22 warning:', error.message);
+      }
+
+      // Migration 23: Create rice stock locations table
+      try {
+        const createRiceStockLocationsTable = require('./migrations/create_rice_stock_locations_table');
+        await createRiceStockLocationsTable.up();
+        console.log('✅ Migration 23: Rice stock locations table created');
+      } catch (error) {
+        console.log('⚠️ Migration 23 warning:', error.message);
+      }
+
+      // Migration 24: Update packaging kg to decimal
+      try {
+        const updatePackagingKgToDecimal = require('./migrations/update_packaging_kg_to_decimal');
+        await updatePackagingKgToDecimal.up();
+        console.log('✅ Migration 24: Packaging KG converted to decimal');
+      } catch (error) {
+        console.log('⚠️ Migration 24 warning:', error.message);
+      }
+
+      // Migration 25: Add yield percentage to outturns
+      try {
+        const addYieldPercentageToOutturns = require('./migrations/25_add_yield_percentage_to_outturns');
+        await addYieldPercentageToOutturns.up();
+        console.log('✅ Migration 25: Yield percentage column added to outturns');
+      } catch (error) {
+        console.log('⚠️ Migration 25 warning:', error.message);
+      }
+
+      // Migration 26: Create paddy hamali rates table
+      try {
+        const createPaddyHamaliRatesTable = require('./migrations/create_paddy_hamali_rates_table');
+        const queryInterface = sequelize.getQueryInterface();
+        await createPaddyHamaliRatesTable.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 26: Paddy hamali rates table created with default rates');
+      } catch (error) {
+        console.log('⚠️ Migration 26 warning:', error.message);
+      }
+
+      // Migration 27: Create paddy hamali entries table
+      try {
+        const createPaddyHamaliEntriesTable = require('./migrations/create_paddy_hamali_entries_table');
+        const queryInterface = sequelize.getQueryInterface();
+        await createPaddyHamaliEntriesTable.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 27: Paddy hamali entries table created');
+      } catch (error) {
+        console.log('⚠️ Migration 27 warning:', error.message);
+      }
+
+      // Migration 28: Add Sizer Broken to rice_productions
+      try {
+        const addSizerBrokenToRiceProduction = require('./migrations/add_sizer_broken_to_rice_production');
+        await addSizerBrokenToRiceProduction();
+        console.log('✅ Migration 28: "Sizer Broken" added to rice_productions productType');
+      } catch (error) {
+        console.log('⚠️ Migration 28 warning:', error.message);
+      }
+
+      // Migration 29: Add base_rate_calculation_method to purchase_rates
+      try {
+        const addBaseRateCalculationMethod = require('./migrations/add_base_rate_calculation_method');
+        await addBaseRateCalculationMethod();
+        console.log('✅ Migration 29: base_rate_calculation_method added to purchase_rates');
+      } catch (error) {
+        console.log('⚠️ Migration 29 warning:', error.message);
+      }
+
+      // Migration 30: Add average_rate and last_rate_calculation to kunchinittus
+      try {
+        const addAverageRateToKunchinittus = require('./migrations/30_add_average_rate_to_kunchinittus');
+        const queryInterface = sequelize.getQueryInterface();
+        await addAverageRateToKunchinittus.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 30: average_rate and last_rate_calculation added to kunchinittus');
+      } catch (error) {
+        console.log('⚠️ Migration 30 warning:', error.message);
+      }
+
+      // Migration 31: Add Sizer Broken to rice_productions ENUM
+      try {
+        const addSizerBrokenToRiceProduction = require('./migrations/add_sizer_broken_to_rice_production');
+        const queryInterface = sequelize.getQueryInterface();
+        await addSizerBrokenToRiceProduction.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 31: Sizer Broken added to rice_productions product types');
+      } catch (error) {
+        console.log('⚠️ Migration 31 warning:', error.message);
+      }
+
+      // Migration 32: Add worker_name and batch_number to paddy_hamali_entries
+      try {
+        const addWorkerBatchToPaddyHamali = require('./migrations/add_worker_batch_to_paddy_hamali');
+        const queryInterface = sequelize.getQueryInterface();
+        await addWorkerBatchToPaddyHamali.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 32: Worker name and batch number added to paddy hamali entries');
+      } catch (error) {
+        console.log('⚠️ Migration 32 warning:', error.message);
+      }
+
+      // Migration 33: Create other_hamali_works table
+      try {
+        const createOtherHamaliWorksTable = require('./migrations/create_other_hamali_works_table');
+        const queryInterface = sequelize.getQueryInterface();
+        await createOtherHamaliWorksTable.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 33: Other hamali works table created');
+      } catch (error) {
+        console.log('⚠️ Migration 33 warning:', error.message);
+      }
+
+      // Migration 34: Create other_hamali_entries table
+      try {
+        const createOtherHamaliEntriesTable = require('./migrations/create_other_hamali_entries_table');
+        const queryInterface = sequelize.getQueryInterface();
+        await createOtherHamaliEntriesTable.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 34: Other hamali entries table created');
+      } catch (error) {
+        console.log('⚠️ Migration 34 warning:', error.message);
+      }
+
+      // Migration 32: Fix Sizer Broken CHECK constraint
+      try {
+        const fixSizerBrokenCheckConstraint = require('./migrations/32_fix_sizer_broken_check_constraint');
+        const queryInterface = sequelize.getQueryInterface();
+        await fixSizerBrokenCheckConstraint.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 32: Sizer Broken CHECK constraint fixed');
+      } catch (error) {
+        console.log('⚠️ Migration 32 warning:', error.message);
+      }
+
+      // Migration 35: Add Rice Hamali System
+      try {
+        const addRiceHamaliSystem = require('./migrations/add_rice_hamali_system');
+        await addRiceHamaliSystem.up();
+        console.log('✅ Migration 35: Rice Hamali System added');
+      } catch (error) {
+        console.log('⚠️ Migration 35 warning:', error.message);
+      }
+
+      // Migration 36: Add Complete Rice Hamali Rates (69 work types)
+      try {
+        const addCompleteRiceHamaliRates = require('./migrations/36_add_complete_rice_hamali_rates');
+        await addCompleteRiceHamaliRates.up();
+        console.log('✅ Migration 36: Complete Rice Hamali Rates added');
+      } catch (error) {
+        console.log('⚠️ Migration 36 warning:', error.message);
+      }
+
+      // Migration 37: Fix Rice Hamali Rates with exact data from images
+      try {
+        const fixRiceHamaliRatesFromImages = require('./migrations/37_fix_rice_hamali_rates_from_images');
+        await fixRiceHamaliRatesFromImages.up();
+        console.log('✅ Migration 37: Rice Hamali Rates from images fixed');
+      } catch (error) {
+        console.log('⚠️ Migration 37 warning:', error.message);
+      }
+
+      // Migration 38: Create Rice Hamali Entries Table
+      try {
+        const createRiceHamaliEntriesTable = require('./migrations/38_create_rice_hamali_entries_table');
+        await createRiceHamaliEntriesTable();
+        console.log('✅ Migration 38: Rice Hamali Entries table created');
+      } catch (error) {
+        console.log('⚠️ Migration 38 warning:', error.message);
+      }
+
+      // Migration 39: Fix Rice Hamali Entries Table Structure
+      try {
+        const fixRiceHamaliEntriesTable = require('./migrations/39_fix_rice_hamali_entries_table');
+        await fixRiceHamaliEntriesTable();
+        console.log('✅ Migration 39: Rice Hamali Entries table structure fixed');
+      } catch (error) {
+        console.log('⚠️ Migration 39 warning:', error.message);
+      }
+
+      // Migration 40: Create Rice Stock Management System
+      try {
+        const createRiceStockManagementSystem = require('./migrations/40_create_rice_stock_management_system');
+        await createRiceStockManagementSystem();
+        console.log('✅ Migration 40: Rice Stock Management System created');
+      } catch (error) {
+        console.log('⚠️ Migration 40 warning:', error.message);
+      }
+
+      // Migration 40.5: Comprehensive System Enhancements
+      try {
+        const migration40_5 = require('./migrations/40_comprehensive_system_enhancements');
+        await migration40_5.up();
+        console.log('✅ Migration 40.5: Comprehensive system enhancements completed');
+      } catch (error) {
+        console.log('⚠️ Migration 40.5 warning:', error.message);
+      }
+
+      // Migration 41: Add Rice Stock Movement Hamali Support
+      try {
+        const addRiceStockMovementHamaliSupport = require('./migrations/41_add_rice_stock_movement_hamali_support');
+        await addRiceStockMovementHamaliSupport();
+        console.log('✅ Migration 41: Rice Stock Movement Hamali Support added');
+      } catch (error) {
+        console.log('⚠️ Migration 41 warning:', error.message);
+      }
+
+      // Migration 42: Add Rice Stock Approval System and Palti Feature
+      try {
+        const addRiceStockApprovalAndPaltiSystem = require('./migrations/42_add_rice_stock_approval_and_palti_system');
+        await addRiceStockApprovalAndPaltiSystem.up();
+        console.log('✅ Migration 42: Rice Stock Approval System + Palti Feature added');
+      } catch (error) {
+        console.log('⚠️ Migration 42 warning:', error.message);
+      }
+
+      // Migration 43: Fix Rice Hamali Constraint for Palti
+      try {
+        const fixRiceHamaliConstraint = require('./migrations/42_fix_rice_hamali_constraint');
+        await fixRiceHamaliConstraint();
+        console.log('✅ Migration 43: Rice Hamali Constraint fixed for Palti');
+      } catch (error) {
+        console.log('⚠️ Migration 43 warning:', error.message);
+      }
+
+      // Migration 44: Automatic Rice Hamali System (NEW - CRITICAL)
+      try {
+        const automaticRiceHamaliSystem = require('./migrations/43_create_automatic_rice_hamali_system');
+        await automaticRiceHamaliSystem.up();
+        console.log('✅ Migration 44: Automatic Rice Hamali System created - Rice Hamali Book will work perfectly!');
+      } catch (error) {
+        console.log('⚠️ Migration 44 warning:', error.message);
+        console.log('🔧 Rice Hamali system may need manual setup. Run: node run_rice_hamali_migration.js');
+      }
+
+      // Migration 45: Fix purchase_rates table columns (add missing columns like rate_type)
+      try {
+        const fixPurchaseRatesColumns = require('./migrations/fix_purchase_rates_columns');
+        const queryInterface = sequelize.getQueryInterface();
+        await fixPurchaseRatesColumns.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 45: Purchase rates columns fixed');
+      } catch (error) {
+        console.log('⚠️ Migration 45 warning:', error.message);
+      }
+
+      // Migration 46: 10 Lakh Record Performance Optimization Indexes
+      try {
+        const add10LakhOptimizationIndexes = require('./migrations/46_add_10_lakh_optimization_indexes');
+        await add10LakhOptimizationIndexes.up();
+        console.log('✅ Migration 46: 10 Lakh Record Performance Optimization indexes added');
+      } catch (error) {
+        console.log('⚠️ Migration 46 warning:', error.message);
+      }
+
+      // Migration 47: Fix loose entries missing variety (Quick Info stock count fix)
+      try {
+        const updateLooseEntriesVariety = require('./migrations/update_loose_entries_variety');
+        await updateLooseEntriesVariety();
+        console.log('✅ Migration 47: Loose entries variety field updated');
+      } catch (error) {
+        console.log('⚠️ Migration 47 warning:', error.message);
+      }
+
+      // Migration 48: Disable Automatic Rice Hamali Trigger (FIX for production)
+      // This removes the triggers that were auto-creating hamali entries
+      try {
+        const disableAutoHamaliTrigger = require('./migrations/44_disable_auto_hamali_trigger');
+        await disableAutoHamaliTrigger.up();
+        console.log('✅ Migration 48: Automatic hamali trigger disabled - Users must now manually add hamali entries');
+      } catch (error) {
+        console.log('⚠️ Migration 48 warning:', error.message);
+      }
+
+      // Migration 49: Add h_calculation_method to purchase_rates
+      try {
+        const addHCalculationMethod = require('./migrations/47_add_h_calculation_method_to_purchase_rates');
+        await addHCalculationMethod();
+        console.log('✅ Migration 49: h_calculation_method added to purchase_rates');
+      } catch (error) {
+        console.log('⚠️ Migration 49 warning:', error.message);
+      }
+
+      // Migration 50: Add isClosed to kunchinittus (for Kunchinittu Close feature)
+      // SAFE: Only adds new columns with default values (is_closed = false)
+      try {
+        const addIsClosedToKunchinittus = require('./migrations/48_add_is_closed_to_kunchinittus');
+        const queryInterface = sequelize.getQueryInterface();
+        await addIsClosedToKunchinittus.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 50: isClosed fields added to kunchinittus');
+      } catch (error) {
+        console.log('⚠️ Migration 50 warning:', error.message);
+      }
+
+      // Migration 51: Add outturn clearing fields (is_cleared, cleared_at, cleared_by, remaining_bags)
+      // CRITICAL: Fixes 'column o.isCleared does not exist' error in production
+      try {
+        const addOutturnClearingFields = require('./migrations/add_outturn_clearing_fields');
+        await addOutturnClearingFields.up();
+        console.log('✅ Migration 51: Outturn clearing fields added (is_cleared, cleared_at, cleared_by, remaining_bags)');
+      } catch (error) {
+        console.log('⚠️ Migration 51 warning:', error.message);
+      }
+
+      // Migration 52: Add is_direct_load column to rice_stock_locations
+      // Adds support for "Direct Load" location type for temporary single-day use
+      try {
+        const addIsDirectLoadToRiceStockLocations = require('./migrations/52_add_is_direct_load_to_rice_stock_locations');
+        await addIsDirectLoadToRiceStockLocations.up();
+        console.log('✅ Migration 52: is_direct_load column added to rice_stock_locations');
+      } catch (error) {
+        console.log('⚠️ Migration 52 warning:', error.message);
+      }
+
+      // Migration 53: Create rice varieties table
+      // Adds RiceVariety model and initial seed varieties
+      try {
+        const createRiceVarietiesTable = require('./migrations/53_create_rice_varieties');
+        const queryInterface = sequelize.getQueryInterface();
+        await createRiceVarietiesTable.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 53: Rice varieties table created with initial seed data');
+      } catch (error) {
+        console.log('⚠️ Migration 53 warning:', error.message);
+      }
+
+      // Migration 54: Seed DIRECT_LOAD rice stock location
+      // Adds a special location for direct loading that doesn't carry forward stock
+      try {
+        const seedDirectLoad = require('./migrations/54_seed_direct_load');
+        const queryInterface = sequelize.getQueryInterface();
+        await seedDirectLoad.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 54: DIRECT_LOAD location seeded');
+      } catch (error) {
+        console.log('⚠️ Migration 54 warning:', error.message);
+      }
+
+      // Migration 55: Add closed_remaining_bags to kunchinittus
+      try {
+        const addClosedRemainingBags = require('./migrations/55_add_closed_remaining_bags');
+        const queryInterface = sequelize.getQueryInterface();
+        await addClosedRemainingBags.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 55: closed_remaining_bags field added to kunchinittus');
+      } catch (error) {
+        console.log('⚠️ Migration 55 warning:', error.message);
+      }
+
+      // Migration 56: Relax Packaging Constraints
+      try {
+        const relaxPackagingConstraints = require('./migrations/56_relax_packaging_constraints');
+        const queryInterface = sequelize.getQueryInterface();
+        await relaxPackagingConstraints.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 56: Packaging constraints relaxed');
+      } catch (error) {
+        console.log('⚠️ Migration 56 warning:', error.message);
+      }
+
+      // Migration 57: Add source_bags column to rice_stock_movements
+      // Stores original source bags separately for Palti operations (30kg → 26kg conversions)
+      try {
+        const addSourceBagsToRiceStockMovements = require('./migrations/57_add_source_bags_to_rice_stock_movements');
+        const queryInterface = sequelize.getQueryInterface();
+        await addSourceBagsToRiceStockMovements.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 57: source_bags column added to rice_stock_movements');
+      } catch (error) {
+        console.log('⚠️ Migration 57 warning:', error.message);
+      }
+
+      // Migration 58: Backfill source_bags for existing Palti movements
+      // Calculates source_bags from quintals for records where it was NULL
+      try {
+        const backfillSourceBagsForPalti = require('./migrations/58_backfill_source_bags_for_palti');
+        const queryInterface = sequelize.getQueryInterface();
+        await backfillSourceBagsForPalti.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration 58: source_bags backfilled for existing Palti movements');
+      } catch (error) {
+        console.log('⚠️ Migration 58 warning:', error.message);
+      }
+
+      // Migration: Add description to other hamali entries
+      try {
+        const addDescription = require('./migrations/add_description_to_other_hamali_entries');
+        const queryInterface = sequelize.getQueryInterface();
+        await addDescription.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration: Description column added to other hamali entries');
+      } catch (error) {
+        console.log('⚠️ Migration (description) warning:', error.message);
+      }
+
+      // Migration: Add type to outturns
+      try {
+        const addTypeToOutturns = require('./migrations/add_type_to_outturns');
+        await addTypeToOutturns.up();
+        console.log('✅ Migration: Type column added to outturns');
+      } catch (error) {
+        console.log('⚠️ Migration (outturn type) warning:', error.message);
+      }
+
+      // Migration: Update yield percentage precision
+      try {
+        const updateYieldPrecision = require('./migrations/update_yield_percentage_precision');
+        await updateYieldPrecision.up();
+        console.log('✅ Migration: Yield percentage precision updated');
+      } catch (error) {
+        console.log('⚠️ Migration (yield precision) warning:', error.message);
+      }
+
+      // Migration: Create edit propagation logs
+      try {
+        const createEditLogs = require('./migrations/create_edit_propagation_logs');
+        await createEditLogs();
+        console.log('✅ Migration: Edit propagation logs table created');
+      } catch (error) {
+        console.log('⚠️ Migration (edit logs) warning:', error.message);
+      }
+
+      // Migration: Fix purchase rates null rate type
+      try {
+        const fixNullRateType = require('./migrations/fix_purchase_rates_null_rate_type');
+        const queryInterface = sequelize.getQueryInterface();
+        await fixNullRateType.up(queryInterface, sequelize.Sequelize);
+        console.log('✅ Migration: NULL rate types fixed in purchase rates');
+      } catch (error) {
+        console.log('⚠️ Migration (fix rate type) warning:', error.message);
+      }
+      // Migration 60: Rice Stock Variety Standardization
+      try {
+        const migration60 = require('./migrations/60_add_rice_stock_variety_standardization');
+        await migration60.up();
+        console.log('✅ Migration 60: Rice stock variety standardization completed');
+      } catch (error) {
+        console.log('⚠️ Migration 60 warning:', error.message);
+      }
+
+      // Auto-fix: RJ Broken and Rejection Rice product types
+      try {
+        console.log('🔄 Auto-fixing product types (RJ Broken, Rejection Rice)...');
+        await sequelize.query('ALTER TABLE rice_productions DROP CONSTRAINT IF EXISTS "rice_productions_producttype_check"');
+        await sequelize.query(`ALTER TYPE "enum_rice_productions_productType" ADD VALUE IF NOT EXISTS 'RJ Broken'`);
+        await sequelize.query(`ALTER TYPE "enum_rice_productions_productType" ADD VALUE IF NOT EXISTS 'Rejection Rice'`);
+        await sequelize.query(`
+          ALTER TABLE rice_productions 
+          ADD CONSTRAINT "rice_productions_producttype_check" 
+          CHECK ("productType"::text = ANY (ARRAY[
+            'Rice'::text, 'Bran'::text, 'Farm Bran'::text, 'Rejection Rice'::text, 
+            'Sizer Broken'::text, 'Rejection Broken'::text, 'RJ Broken'::text,
+            'Broken'::text, 'Zero Broken'::text, 'Faram'::text, 'Unpolished'::text, 
+            'RJ Rice 1'::text, 'RJ Rice 2'::text
+          ]))
+        `);
+        console.log('✅ Auto-fix: RJ Broken and Rejection Rice added to product types');
+      } catch (error) {
+        console.log('⚠️ Product types auto-fix warning:', error.message);
+      }
+
+      console.log('✅ Migrations completed.');
+    } catch (error) {
+      console.log('⚠️ Migrations warning:', error.message);
+    }
+
+    // Default warehouses removed - users should create their own warehouses
+
+    // Create default users if they don't exist
+    try {
+      await require('./seeders/createDefaultUsers')();
+    } catch (error) {
+      console.log('⚠️ Default users creation warning:', error.message);
+    }
+
+    app.listen(PORT, () => {
+      console.log(`🚀 Mother India Stock Management Server running on port ${PORT}`);
+      console.log(`🌐 API Base URL: http://localhost:${PORT}/api`);
+    });
+  } catch (error) {
+    console.error('❌ Unable to start server:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
+
+module.exports = app;

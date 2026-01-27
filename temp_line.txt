@@ -1,0 +1,1 @@
+﻿                                          const sourceKey = `${sourceVariety}|${sourceLoc}|${sourcePkg}|${sourceBagSize2}`;
