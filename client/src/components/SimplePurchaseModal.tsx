@@ -15,11 +15,11 @@ const ModalOverlay = styled.div`
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 30px 0;
-  overflow-y: auto;
+  padding: 20px;
   background: rgba(0, 0, 0, 0.3);
   pointer-events: auto;
   animation: fadeIn 0.2s ease;
+  overflow-y: auto;
   
   @keyframes fadeIn {
     from { opacity: 0; }
@@ -192,10 +192,17 @@ interface SimplePurchaseModalProps {
   onSuccess: () => void;
 }
 
+// Product types available for purchase
+const PRODUCT_TYPES = [
+  'Rice', 'Bran', 'Broken', 'RJ Rice 1', 'RJ Rice 2', 'RJ Broken',
+  '0 Broken', 'Sizer Broken', 'Unpolish', 'Faram'
+];
+
 const SimplePurchaseModal: React.FC<SimplePurchaseModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     billNumber: '',
+    productType: 'Rice', // NEW: Product type selection
     outturnId: null as number | null, // Changed from variety to outturnId
     bags: '',
     bagSize: '26.00',
@@ -280,14 +287,28 @@ const SimplePurchaseModal: React.FC<SimplePurchaseModalProps> = ({ isOpen, onClo
   const handleInputChange = (field: string, value: string) => {
     const uppercaseFields = ['billNumber', 'from', 'lorryNumber'];
     const finalValue = uppercaseFields.includes(field) ? value.toUpperCase() : value;
+    
+    // NEW: Auto-fill bag size when packaging is selected
+    if (field === 'packaging' && value) {
+      const selectedPkg = packagings.find(pkg => pkg.id === parseInt(value));
+      if (selectedPkg) {
+        setFormData(prev => ({ 
+          ...prev, 
+          [field]: finalValue,
+          bagSize: String(selectedPkg.allottedKg) // Auto-fill bag size
+        }));
+        return;
+      }
+    }
+    
     setFormData(prev => ({ ...prev, [field]: finalValue }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!formData.date || !formData.billNumber || !formData.bags || !formData.packaging || !formData.to || !formData.outturnId) {
-      toast.error('Please fill in all required fields including rice variety');
+    if (!formData.date || !formData.billNumber || !formData.bags || !formData.packaging || !formData.to || !formData.outturnId || !formData.productType) {
+      toast.error('Please fill in all required fields including product type and rice variety');
       return;
     }
 
@@ -301,7 +322,7 @@ const SimplePurchaseModal: React.FC<SimplePurchaseModalProps> = ({ isOpen, onClo
       await axios.post('/rice-stock-management/movements', {
         date: formData.date,
         movementType: 'purchase',
-        productType: 'Rice', // Default product type
+        productType: formData.productType, // NEW: Use selected product type
         outturnId: formData.outturnId, // NEW: Include outturn ID for standardization
         variety: selectedVarietyData?.standardized_variety || 'UNKNOWN VARIETY', // BACKWARD COMPATIBILITY: Include variety string
         bags: parseInt(formData.bags),
@@ -316,7 +337,7 @@ const SimplePurchaseModal: React.FC<SimplePurchaseModalProps> = ({ isOpen, onClo
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      toast.success('Purchase added successfully!');
+      toast.success(`${formData.productType} purchase added successfully!`);
       onSuccess();
       onClose();
 
@@ -324,6 +345,7 @@ const SimplePurchaseModal: React.FC<SimplePurchaseModalProps> = ({ isOpen, onClo
       setFormData({
         date: new Date().toISOString().split('T')[0],
         billNumber: '',
+        productType: 'Rice',
         outturnId: null,
         bags: '',
         bagSize: '26.00',
@@ -377,6 +399,19 @@ const SimplePurchaseModal: React.FC<SimplePurchaseModalProps> = ({ isOpen, onClo
               </FormGroup>
 
               <FormGroup>
+                <Label>Product Type *</Label>
+                <Select
+                  value={formData.productType}
+                  onChange={(e) => handleInputChange('productType', e.target.value)}
+                  required
+                >
+                  {PRODUCT_TYPES.map(type => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </Select>
+              </FormGroup>
+
+              <FormGroup>
                 <RiceStockVarietyDropdown
                   value={formData.outturnId}
                   onChange={handleVarietyChange}
@@ -385,27 +420,6 @@ const SimplePurchaseModal: React.FC<SimplePurchaseModalProps> = ({ isOpen, onClo
                   required={true}
                   showVarietyInfo={true}
                   processingTypeFilter="all"
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <Label>Bags *</Label>
-                <Input
-                  type="number"
-                  value={formData.bags}
-                  onChange={(e) => handleInputChange('bags', e.target.value)}
-                  min="1"
-                  required
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <Label>Bag Size (KG)</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={formData.bagSize}
-                  onChange={(e) => handleInputChange('bagSize', e.target.value)}
                 />
               </FormGroup>
 
@@ -426,17 +440,31 @@ const SimplePurchaseModal: React.FC<SimplePurchaseModalProps> = ({ isOpen, onClo
               </FormGroup>
 
               <FormGroup>
-                <Label>From</Label>
+                <Label>Bag Size (KG) *</Label>
                 <Input
-                  type="text"
-                  value={formData.from}
-                  onChange={(e) => handleInputChange('from', e.target.value)}
-                  placeholder="Supplier/Source"
+                  type="number"
+                  step="0.01"
+                  value={formData.bagSize}
+                  onChange={(e) => handleInputChange('bagSize', e.target.value)}
+                  readOnly
+                  style={{ background: '#f3f4f6', cursor: 'not-allowed' }}
+                  title="Auto-filled from packaging selection"
                 />
               </FormGroup>
 
               <FormGroup>
-                <Label>To *</Label>
+                <Label>Bags *</Label>
+                <Input
+                  type="number"
+                  value={formData.bags}
+                  onChange={(e) => handleInputChange('bags', e.target.value)}
+                  min="1"
+                  required
+                />
+              </FormGroup>
+
+              <FormGroup>
+                <Label>To Location *</Label>
                 <Select
                   value={formData.to}
                   onChange={(e) => handleInputChange('to', e.target.value)}
@@ -449,6 +477,16 @@ const SimplePurchaseModal: React.FC<SimplePurchaseModalProps> = ({ isOpen, onClo
                     </option>
                   ))}
                 </Select>
+              </FormGroup>
+
+              <FormGroup>
+                <Label>From (Supplier)</Label>
+                <Input
+                  type="text"
+                  value={formData.from}
+                  onChange={(e) => handleInputChange('from', e.target.value)}
+                  placeholder="Supplier/Source"
+                />
               </FormGroup>
 
               <FormGroup style={{ gridColumn: '1 / -1' }}>

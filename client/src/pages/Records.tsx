@@ -19,10 +19,10 @@ import {
   generatePurchasePDF,
   generateShiftingPDF,
   generatePaddyStockPDF,
-  generateRiceStockPDF,
   generateRiceMovementsPDF,
   generateOutturnReportPDF
 } from '../utils/recordsPdfGenerator';
+import { generateRiceStockPDF } from '../utils/riceStockPdfGenerator_NEW';
 import PaginationControls from '../components/PaginationControls';
 
 const Container = styled.div`
@@ -996,6 +996,82 @@ const Records: React.FC = () => {
     [filteredByProducts, byProductPage, byProductsPerPage]
   );
 
+  // PERFORMANCE OPTIMIZATION: Memoize rice stock data processing
+  const processedRiceStockData = useMemo(() => {
+    console.log('🚀 Processing rice stock data for rendering...');
+    const startTime = performance.now();
+
+    // Step 1: Filter the data
+    const filteredData = riceStockData.filter((item: any) => {
+      if (item.locationCode === 'CLEARING') return false;
+      if (!riceReportSearch) return true;
+      const searchLower = riceReportSearch.toLowerCase();
+      return (
+        item.outturn?.code?.toLowerCase().includes(searchLower) ||
+        item.billNumber?.toLowerCase().includes(searchLower) ||
+        item.locationCode?.toLowerCase().includes(searchLower) ||
+        item.lorryNumber?.toLowerCase().includes(searchLower) ||
+        item.partyName?.toLowerCase().includes(searchLower) ||
+        item.variety?.toLowerCase().includes(searchLower)
+      );
+    });
+
+    // Step 2: Process data (keep individual rows for hamali matching)
+    const processedData: any[] = filteredData.map(item => ({ ...item, _isGrouped: false, _groupItems: [] }));
+
+    // Sort by date descending
+    processedData.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    // Build SL number lookup with rowspan info for grouped sales
+    const billGroups: { [key: string]: any[] } = {};
+    let currentSl = 0;
+
+    // First pass: group by bill number (for sales)
+    processedData.forEach((item: any, i: number) => {
+      if (item.movementType === 'sale' && item.billNumber) {
+        const billKey = `sale_${item.billNumber}_${item.date}`;
+        if (!billGroups[billKey]) {
+          billGroups[billKey] = [];
+        }
+        billGroups[billKey].push(i);
+      }
+    });
+
+    // Second pass: assign SL numbers and rowspan info
+    const slAssigned: { [key: string]: boolean } = {};
+    processedData.forEach((item: any, i: number) => {
+      if (item.movementType === 'sale' && item.billNumber) {
+        const billKey = `sale_${item.billNumber}_${item.date}`;
+        const groupIndices = billGroups[billKey];
+
+        if (!slAssigned[billKey]) {
+          currentSl++;
+          slAssigned[billKey] = true;
+          item._slNumber = currentSl;
+          item._rowspan = groupIndices.length;
+          item._isFirstOfGroup = true;
+          item._isPartOfGroup = groupIndices.length > 1;
+        } else {
+          item._slNumber = null;
+          item._rowspan = 0;
+          item._isFirstOfGroup = false;
+          item._isPartOfGroup = true;
+        }
+      } else {
+        currentSl++;
+        item._slNumber = currentSl;
+        item._rowspan = 1;
+        item._isFirstOfGroup = true;
+        item._isPartOfGroup = false;
+      }
+    });
+
+    const endTime = performance.now();
+    console.log(`✅ Rice stock data processed in ${(endTime - startTime).toFixed(2)}ms - ${processedData.length} rows`);
+
+    return processedData;
+  }, [riceStockData, riceReportSearch]);
+
   // Debounce search input for performance with 10 lakh records
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -1016,7 +1092,7 @@ const Records: React.FC = () => {
     }
 
     fetchRecords();
-  }, [activeTab, page, dateFrom, dateTo, debouncedSearch, showAllRecords, selectedMonth]);
+  }, [activeTab, page, dateFrom, dateTo, debouncedSearch, showAllRecords, selectedMonth, riceStockPage]);
 
   // Auto-fetch when month changes for paddy stock
   useEffect(() => {
@@ -2077,8 +2153,8 @@ const Records: React.FC = () => {
         // CRITICAL FIX: Fetch ALL productions for correct opening stock calculation
         console.log('📊 Fetching rice productions...');
         const productionsParams: any = {
-          limit: 5000,  // Increased to fetch all productions for accurate stock calculation
-          page: 1       // Always start from page 1 to get all data
+          limit: 100,  // OPTIMIZED: Fetch only 100 records per page for fast loading
+          page: riceStockPage  // Use actual pagination state
         };
 
         // OPTIMIZED: Support combined month and date range filters
@@ -2102,13 +2178,13 @@ const Records: React.FC = () => {
         }
 
         // Fetch rice stock movements (Purchase/Sale/Palti)
-        // CRITICAL FIX: Fetch ALL movements for correct opening stock calculation (palti deductions)
+        // OPTIMIZED: Use proper pagination for fast loading (50 records per page instead of 5000)
         console.log('📦 Fetching rice stock movements...');
         let stockMovements: any[] = [];
         try {
           const movementsParams: any = {
-            limit: 5000,  // Increased to fetch all movements for accurate palti deduction calculation
-            page: 1,      // Always start from page 1 to get all data
+            limit: 100,  // OPTIMIZED: Fetch only 100 records per page for fast loading
+            page: riceStockPage,  // Use actual pagination state
             _t: Date.now() // Cache buster
           };
 
@@ -2134,7 +2210,15 @@ const Records: React.FC = () => {
           });
 
           stockMovements = (movementsResponse.data as any).data?.movements || [];
-          console.log('✅ Rice stock movements response:', stockMovements.length, 'records');
+          
+          // Update pagination state from response
+          const pagination = (movementsResponse.data as any).data?.pagination;
+          if (pagination) {
+            setRiceStockTotalPages(pagination.totalPages || 1);
+            setRiceStockTotalRecords(pagination.totalRecords || 0);
+          }
+          
+          console.log('✅ Rice stock movements response:', stockMovements.length, 'records (page', riceStockPage, 'of', pagination?.totalPages || 1, ')');
 
           // Filter by approval status on frontend (show all statuses for debugging)
           const approvedMovements = stockMovements.filter((m: any) => m.status === 'approved');
@@ -2166,7 +2250,8 @@ const Records: React.FC = () => {
           ...(productionsResponse.data.productions || []).map((prod: any) => ({
             ...prod,
             movementType: 'production',
-            variety: prod.outturn?.allottedVariety || 'Sum25 RNR Raw',
+            // CRITICAL FIX: Include processing type (RAW/STEAM) in variety display
+            variety: prod.outturn ? `${prod.outturn.allottedVariety} ${prod.outturn.type}`.toUpperCase() : 'SUM25 RNR RAW',
             productType: prod.productType || prod.product || 'Rice', // Add product type
             bagSizeKg: prod.packaging?.allottedKg || 26,
             packagingId: prod.packagingId, // Ensure packagingId is available for edits
@@ -3335,80 +3420,7 @@ const Records: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {(() => {
-                    // Step 1: Filter the data
-                    const filteredData = riceStockData.filter((item: any) => {
-                      if (item.locationCode === 'CLEARING') return false;
-                      if (!riceReportSearch) return true;
-                      const searchLower = riceReportSearch.toLowerCase();
-                      return (
-                        item.outturn?.code?.toLowerCase().includes(searchLower) ||
-                        item.billNumber?.toLowerCase().includes(searchLower) ||
-                        item.locationCode?.toLowerCase().includes(searchLower) ||
-                        item.lorryNumber?.toLowerCase().includes(searchLower) ||
-                        item.partyName?.toLowerCase().includes(searchLower) ||
-                        item.variety?.toLowerCase().includes(searchLower)
-                      );
-                    });
-
-                    // Step 2: Group Sales by billNumber+date, keep others as-is
-                    const processedData: any[] = [];
-
-                    // Keep individual rows for hamali matching
-                    filteredData.forEach((item: any) => {
-                      processedData.push({ ...item, _isGrouped: false, _groupItems: [] });
-                    });
-
-                    // Sort by date descending
-                    processedData.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-                    // Build SL number lookup with rowspan info for grouped sales
-                    const billGroups: { [key: string]: any[] } = {};
-                    let currentSl = 0;
-
-                    // First pass: group by bill number (for sales AND palti)
-                    processedData.forEach((item: any, i: number) => {
-                      if (item.movementType === 'sale' && item.billNumber) {
-                        const billKey = `sale_${item.billNumber}_${item.date}`;
-                        if (!billGroups[billKey]) {
-                          billGroups[billKey] = [];
-                        }
-                        billGroups[billKey].push(i);
-                      }
-                    });
-
-                    // Second pass: assign SL numbers and rowspan info
-                    const slAssigned: { [key: string]: boolean } = {};
-                    processedData.forEach((item: any, i: number) => {
-                      if (item.movementType === 'sale' && item.billNumber) {
-                        const billKey = `sale_${item.billNumber}_${item.date}`;
-                        const groupIndices = billGroups[billKey];
-
-                        if (!slAssigned[billKey]) {
-                          // First row of this group - gets the SL cell with rowspan
-                          currentSl++;
-                          slAssigned[billKey] = true;
-                          item._slNumber = currentSl;
-                          item._rowspan = groupIndices.length;
-                          item._isFirstOfGroup = true;
-                          item._isPartOfGroup = groupIndices.length > 1;
-                        } else {
-                          // Subsequent rows - no SL cell (merged)
-                          item._slNumber = null; // Skip SL cell
-                          item._rowspan = 0;
-                          item._isFirstOfGroup = false;
-                          item._isPartOfGroup = true;
-                        }
-                      } else {
-                        currentSl++;
-                        item._slNumber = currentSl;
-                        item._rowspan = 1;
-                        item._isFirstOfGroup = true;
-                        item._isPartOfGroup = false;
-                      }
-                    });
-
-                    return processedData.map((item: any, idx: number) => {
+                  {processedRiceStockData.map((item: any, idx: number) => {
 
                       // Determine row color based on movement type
                       let rowColor = 'white';
@@ -3734,8 +3746,7 @@ const Records: React.FC = () => {
                           )}
                         </tr>
                       );
-                    });
-                  })()}
+                    })}
                 </tbody>
               </ExcelTable>
             </div>
@@ -3847,7 +3858,10 @@ const Records: React.FC = () => {
               )}
               <Button
                 className="success"
-                onClick={() => setShowPurchaseModal(true)}
+                onClick={() => {
+                  setShowPurchaseModal(true);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
                 style={{
                   fontWeight: 'bold',
                   padding: '0.75rem 1.5rem',
@@ -3858,7 +3872,10 @@ const Records: React.FC = () => {
               </Button>
               <Button
                 className="danger"
-                onClick={() => setShowSaleModal(true)}
+                onClick={() => {
+                  setShowSaleModal(true);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
                 style={{
                   fontWeight: 'bold',
                   padding: '0.75rem 1.5rem',
@@ -3869,7 +3886,10 @@ const Records: React.FC = () => {
               </Button>
               <Button
                 className="primary"
-                onClick={() => setShowPaltiModal(true)}
+                onClick={() => {
+                  setShowPaltiModal(true);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
                 style={{
                   background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
                   color: 'white',

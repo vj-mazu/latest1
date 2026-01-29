@@ -1094,6 +1094,7 @@ router.post('/movements', auth, async (req, res) => {
             movementType,
             productType: frontendProductType,
             variety,
+            outturnId, // NEW: outturn ID for variety standardization
             bags,
             sourceBags, // For palti operations
             quantityQuintals,
@@ -1132,7 +1133,34 @@ router.post('/movements', auth, async (req, res) => {
             console.log(`🔄 Product type mapped: "${frontendProductType}" → "${productType}"`);
         }
 
-        console.log('📥 Rice stock movement creation request:', { ...req.body, productType });
+        // ✅ NEW: VARIETY NORMALIZATION - Fetch standardized variety from outturn if outturnId provided
+        let finalVariety = variety;
+
+        if (outturnId) {
+            try {
+                const [outturnResult] = await sequelize.query(`
+                    SELECT UPPER("allottedVariety" || ' ' || type) as standardized_variety
+                    FROM outturns
+                    WHERE id = :outturnId
+                `, {
+                    replacements: { outturnId: parseInt(outturnId) },
+                    type: sequelize.QueryTypes.SELECT
+                });
+                
+                if (outturnResult && outturnResult.standardized_variety) {
+                    finalVariety = outturnResult.standardized_variety;
+                    console.log(`✅ Variety standardized from outturn ${outturnId}: ${finalVariety}`);
+                }
+            } catch (error) {
+                console.warn('⚠️ Could not fetch variety from outturn:', error.message);
+            }
+        }
+
+        // Fallback to provided variety or default
+        finalVariety = finalVariety || variety || 'SUM25 RNR RAW';
+        console.log(`📊 Final variety for storage: ${finalVariety}`);
+
+        console.log('📥 Rice stock movement creation request:', { ...req.body, productType, finalVariety });
 
 
         // Validation
@@ -1699,11 +1727,13 @@ router.post('/movements', auth, async (req, res) => {
                 date,
                 movementType,
                 productType,
-                variety: variety || 'Sum25 RNR Raw',
+                variety: finalVariety, // ✅ Use normalized variety
                 bags: parseInt(finalBags),
                 bagSizeKg: finalPackagingKg ? parseFloat(finalPackagingKg) : 26,
                 quantityQuintals: parseFloat(finalQuantityQuintals),
-                packagingId: (packagingId || targetPackagingId) ? parseInt(packagingId || targetPackagingId) : null,
+                packagingId: movementType === 'palti' 
+                    ? null  // ✅ Set to NULL for palti - rely on source_packaging_id + target_packaging_id
+                    : ((packagingId || targetPackagingId) ? parseInt(packagingId || targetPackagingId) : null),
                 // Store source_bags for Palti operations (original bags before conversion)
                 sourceBagsValue: movementType === 'palti' && sourceBags ? parseInt(sourceBags) : null,
                 locationCode,

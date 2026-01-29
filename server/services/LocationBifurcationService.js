@@ -357,15 +357,16 @@ class LocationBifurcationService {
       // 2. Build variety matching
       const varietyConditions = this._buildVarietyMatching(variety, null);
       
-      // 3. Calculate opening stock (date < saleDate) - CRITICAL FIX
+      // 3. Calculate opening stock (date <= saleDate) - CRITICAL FIX
       const openingStockQuery = `
         WITH stock_calculation AS (
-          -- PURCHASES (opening stock only)
+          -- PURCHASES (opening stock - include same-date purchases)
+          -- CRITICAL FIX: Include same-date purchases (date <= saleDate) because purchase happens BEFORE sale
           SELECT SUM(rsm.bags) as movement_bags
           FROM rice_stock_movements rsm
           LEFT JOIN packagings p ON rsm.packaging_id = p.id
           WHERE rsm.status = 'approved'
-            AND rsm.date < :saleDate
+            AND rsm.date <= :saleDate
             AND rsm.movement_type = 'purchase'
             AND rsm.location_code = :locationCode
             AND rsm.product_type = :productType
@@ -406,11 +407,12 @@ class LocationBifurcationService {
           UNION ALL
           
           -- PALTI TARGET (add target bags to opening stock)
+          -- CRITICAL FIX: Include same-date palti targets (date <= saleDate) because palti happens BEFORE sale
           SELECT SUM(rsm.bags) as movement_bags
           FROM rice_stock_movements rsm
           LEFT JOIN packagings tp ON rsm.target_packaging_id = tp.id
           WHERE rsm.status = 'approved'
-            AND rsm.date < :saleDate
+            AND rsm.date <= :saleDate
             AND rsm.movement_type = 'palti'
             AND COALESCE(rsm.to_location, rsm.location_code) = :locationCode
             AND rsm.product_type = :productType
@@ -421,12 +423,13 @@ class LocationBifurcationService {
           UNION ALL
           
           -- PRODUCTION (add to opening stock)
+          -- CRITICAL FIX: Include same-date productions (date <= saleDate) because production happens BEFORE sale
           SELECT SUM(rp.bags) as movement_bags
           FROM rice_productions rp
           LEFT JOIN outturns o ON rp."outturnId" = o.id
           LEFT JOIN packagings p ON rp."packagingId" = p.id
           WHERE rp.status = 'approved'
-            AND rp.date < :saleDate
+            AND rp.date <= :saleDate
             AND rp."locationCode" = :locationCode
             AND rp."productType" = :productType
             AND p."brandName" = :packagingBrand
@@ -1025,32 +1028,52 @@ class LocationBifurcationService {
 
   /**
    * Generate variety aliases for matching
+   * CRITICAL FIX: RAW and STEAM are SEPARATE varieties - NEVER merge them!
    */
   static _generateVarietyAliases(variety) {
     const normalized = this._normalize(variety);
     const aliases = new Set([variety, normalized]);
 
-    // Add case variations
+    // Add case variations ONLY (preserve RAW/STEAM distinction)
     aliases.add(variety.toLowerCase());
     aliases.add(variety.toUpperCase());
     aliases.add(this._toTitleCase(variety));
 
-    // Handle Raw/Steam variations without cross-contamination
+    // CRITICAL: RAW and STEAM are SEPARATE varieties
+    // Only add exact variations with the SAME processing type
     const lowerVariety = normalized.toLowerCase();
 
     if (lowerVariety.includes('raw')) {
-      const withoutRaw = lowerVariety.replace(/\s*raw\s*/gi, '').trim();
-      aliases.add(withoutRaw + ' raw');
-      aliases.add(withoutRaw.toUpperCase() + ' RAW');
-      aliases.add(`${withoutRaw} Raw`);
+      // Only add RAW variations - NEVER add without RAW
+      aliases.add(variety.replace(/raw/gi, 'RAW'));
+      aliases.add(variety.replace(/raw/gi, 'Raw'));
+      aliases.add(variety.replace(/raw/gi, 'raw'));
     } else if (lowerVariety.includes('steam')) {
-      const withoutSteam = lowerVariety.replace(/\s*steam\s*/gi, '').trim();
-      aliases.add(withoutSteam + ' steam');
-      aliases.add(withoutSteam.toUpperCase() + ' STEAM');
-      aliases.add(`${withoutSteam} Steam`);
+      // Only add STEAM variations - NEVER add without STEAM
+      aliases.add(variety.replace(/steam/gi, 'STEAM'));
+      aliases.add(variety.replace(/steam/gi, 'Steam'));
+      aliases.add(variety.replace(/steam/gi, 'steam'));
     }
 
-    return Array.from(aliases).filter(alias => alias && alias.trim());
+    // CRITICAL: Filter out any aliases that don't preserve the processing type
+    const hasRaw = lowerVariety.includes('raw');
+    const hasSteam = lowerVariety.includes('steam');
+    
+    return Array.from(aliases).filter(alias => {
+      if (!alias || !alias.trim()) return false;
+      const aliasLower = alias.toLowerCase();
+      
+      // If original has RAW, alias MUST have RAW
+      if (hasRaw && !aliasLower.includes('raw')) return false;
+      
+      // If original has STEAM, alias MUST have STEAM
+      if (hasSteam && !aliasLower.includes('steam')) return false;
+      
+      // If original has neither, alias must also have neither
+      if (!hasRaw && !hasSteam && (aliasLower.includes('raw') || aliasLower.includes('steam'))) return false;
+      
+      return true;
+    });
   }
 
   /**

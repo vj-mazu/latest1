@@ -3,6 +3,7 @@ import styled from 'styled-components';
 import axios from 'axios';
 import { toast } from '../utils/toast';
 import { createPortal } from 'react-dom';
+import RiceStockVarietyDropdown from './RiceStockVarietyDropdown';
 
 const ModalOverlay = styled.div`
   position: fixed;
@@ -14,11 +15,11 @@ const ModalOverlay = styled.div`
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 30px 0;
-  overflow-y: auto;
+  padding: 20px;
   background: rgba(0, 0, 0, 0.3);
   pointer-events: auto;
   animation: fadeIn 0.2s ease;
+  overflow-y: auto;
   
   @keyframes fadeIn {
     from { opacity: 0; }
@@ -319,7 +320,8 @@ const SimpleSaleModal: React.FC<SimpleSaleModalProps> = ({ isOpen, onClose, onSu
   // Common fields
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [billNumber, setBillNumber] = useState('');
-  const [variety, setVariety] = useState('');
+  const [outturnId, setOutturnId] = useState<number | null>(null);
+  const [selectedVarietyData, setSelectedVarietyData] = useState<any>(null);
   const [lorryNumber, setLorryNumber] = useState('');
   const [toLocation, setToLocation] = useState('');
 
@@ -330,8 +332,6 @@ const SimpleSaleModal: React.FC<SimpleSaleModalProps> = ({ isOpen, onClose, onSu
 
   const [packagings, setPackagings] = useState<any[]>([]);
   const [locations, setLocations] = useState<any[]>([]);
-  const [varietiesWithStock, setVarietiesWithStock] = useState<{ name: string; stockQtls: string }[]>([]);
-  const [loadingVarieties, setLoadingVarieties] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Draggable state
@@ -375,8 +375,6 @@ const SimpleSaleModal: React.FC<SimpleSaleModalProps> = ({ isOpen, onClose, onSu
     };
   }, [isOpen]);
 
-  // Default variety is set when varieties are fetched
-
   const fetchPackagings = async () => {
     try {
       const response = await axios.get('/packagings');
@@ -396,84 +394,11 @@ const SimpleSaleModal: React.FC<SimpleSaleModalProps> = ({ isOpen, onClose, onSu
     }
   };
 
-  // Fetch varieties that actually have stock
-  const fetchVarietiesWithStock = useCallback(async () => {
-    // Get all unique product types and locations from line items
-    const productTypes = Array.from(new Set(lineItems.map(i => i.productType).filter(Boolean)));
-    const locationCodes = Array.from(new Set(lineItems.map(i => i.locationCode).filter(Boolean)));
-
-    console.log('🔍 VARIETY FETCH DEBUG:', {
-      lineItems: lineItems.map(i => ({ id: i.id, location: i.locationCode, product: i.productType, packaging: i.packagingId })),
-      productTypes,
-      locationCodes,
-      hasLocation: locationCodes.length > 0,
-      hasProduct: productTypes.length > 0
-    });
-
-    // CRITICAL FIX: Only fetch if we have at least one location AND product
-    if (locationCodes.length === 0 || productTypes.length === 0) {
-      console.log('⏸️ Skipping variety fetch - need location and product');
-      console.log('  - Has location:', locationCodes.length > 0, locationCodes);
-      console.log('  - Has product:', productTypes.length > 0, productTypes);
-      setVarietiesWithStock([]);
-      return;
-    }
-
-    // Fetch varieties for each combination (or all if nothing selected)
-    setLoadingVarieties(true);
-    try {
-      const token = localStorage.getItem('token');
-      const params: any = {};
-
-      // Use first line item's values if available
-      if (locationCodes.length > 0) params.locationCode = locationCodes[0];
-      if (productTypes.length > 0) params.productType = productTypes[0];
-
-      console.log('🔍 Fetching varieties with params:', params);
-      console.log('📅 Date:', date);
-
-      const response = await axios.get('/rice-stock-management/varieties-with-stock', {
-        headers: { Authorization: `Bearer ${token}` },
-        params: { ...params, date }
-      });
-
-      console.log('✅ API Response:', response.data);
-      const data = response.data as { varieties: { name: string; stockQtls: string }[] };
-      console.log('✅ Varieties fetched:', data.varieties?.length || 0, data.varieties);
-      setVarietiesWithStock(data.varieties || []);
-
-      // Auto-select first variety if current selection not in list
-      if (data.varieties && data.varieties.length > 0) {
-        const currentInList = data.varieties.some(v => v.name === variety);
-        if (!currentInList && !variety) {
-          console.log('🎯 Auto-selecting first variety:', data.varieties[0].name);
-          setVariety(data.varieties[0].name);
-        }
-      } else {
-        console.warn('⚠️ No varieties returned from API');
-      }
-    } catch (error: any) {
-      console.error('❌ Error fetching varieties with stock:', error);
-      console.error('❌ Error details:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
-      setVarietiesWithStock([]);
-    } finally {
-      setLoadingVarieties(false);
-    }
-  }, [lineItems, variety, date]);
-
-  // CRITICAL FIX: Fetch varieties when modal opens OR when line items change
-  useEffect(() => {
-    if (isOpen) {
-      const debounceTimer = setTimeout(() => {
-        fetchVarietiesWithStock();
-      }, 300);
-      return () => clearTimeout(debounceTimer);
-    }
-  }, [isOpen, lineItems, fetchVarietiesWithStock]);
+  // Handle variety selection from RiceStockVarietyDropdown
+  const handleVarietyChange = (selectedOutturnId: number | null, varietyData: any) => {
+    setOutturnId(selectedOutturnId);
+    setSelectedVarietyData(varietyData);
+  };
 
   const addLineItem = () => {
     const newId = String(Date.now());
@@ -530,7 +455,7 @@ const SimpleSaleModal: React.FC<SimpleSaleModalProps> = ({ isOpen, onClose, onSu
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!date || !billNumber || !variety) {
+    if (!date || !billNumber || !outturnId || !selectedVarietyData) {
       toast.error('Please fill in Date, Bill Number and Variety');
       return;
     }
@@ -559,7 +484,8 @@ const SimpleSaleModal: React.FC<SimpleSaleModalProps> = ({ isOpen, onClose, onSu
           date,
           movementType: 'sale',
           productType: item.productType,
-          variety,
+          outturnId: outturnId,
+          variety: selectedVarietyData?.standardized_variety || 'UNKNOWN',
           bags,
           bagSizeKg: bagSize,
           quantityQuintals: qtls,
@@ -580,7 +506,8 @@ const SimpleSaleModal: React.FC<SimpleSaleModalProps> = ({ isOpen, onClose, onSu
       // Reset form
       setDate(new Date().toISOString().split('T')[0]);
       setBillNumber('');
-      setVariety('');
+      setOutturnId(null);
+      setSelectedVarietyData(null);
       setLorryNumber('');
       setToLocation('');
       setLineItems([{ id: '1', locationCode: '', packagingId: '', productType: 'Rice', bags: '', bagSizeKg: '26' }]);
@@ -629,25 +556,15 @@ const SimpleSaleModal: React.FC<SimpleSaleModalProps> = ({ isOpen, onClose, onSu
                   />
                 </FormGroup>
                 <FormGroup>
-                  <Label>Variety * {loadingVarieties && '⏳'}</Label>
-                  <Select
-                    value={variety}
-                    onChange={(e) => setVariety(e.target.value)}
-                    required
-                    style={{ borderColor: varietiesWithStock.length === 0 && !loadingVarieties ? '#f59e0b' : undefined }}
-                  >
-                    <option value="">Select variety...</option>
-                    {varietiesWithStock.map(v => (
-                      <option key={v.name} value={v.name}>
-                        {v.name} ({v.stockQtls} QTL)
-                      </option>
-                    ))}
-                  </Select>
-                  {varietiesWithStock.length === 0 && !loadingVarieties && (
-                    <span style={{ fontSize: '0.75rem', color: '#f59e0b' }}>
-                      ⚠️ Select location/product first to see varieties
-                    </span>
-                  )}
+                  <RiceStockVarietyDropdown
+                    value={outturnId}
+                    onChange={handleVarietyChange}
+                    label="Rice Variety *"
+                    placeholder="Select variety..."
+                    required={true}
+                    showVarietyInfo={true}
+                    processingTypeFilter="all"
+                  />
                 </FormGroup>
                 <FormGroup>
                   <Label>Lorry Number</Label>

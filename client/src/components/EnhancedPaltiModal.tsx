@@ -19,11 +19,11 @@ const ModalOverlay = styled.div`
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 30px 0;
-  overflow-y: auto;
+  padding: 20px;
   background: rgba(0, 0, 0, 0.3);
   pointer-events: auto;
   animation: fadeIn 0.2s ease;
+  overflow-y: auto;
   
   @keyframes fadeIn {
     from { opacity: 0; }
