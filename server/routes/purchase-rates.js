@@ -183,10 +183,10 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
 
     // NEW CALCULATION LOGIC (Based on User Confirmation - Updated with Column Type Rules)
     // Column Type Rules:
-    // CDL: EGB=Normal, LF=Normal, H=Normal
-    // CDWB: EGB=0, LF=Normal, H=Normal
-    // MDL: EGB=Normal, LF=0, H=Minus treated as Plus
-    // MDWB: EGB=0, LF=0, H=Minus treated as Plus
+    // CDL: EGB=Normal, LF=Normal, H=Normal (Added to total)
+    // CDWB: EGB=0, LF=Normal, H=Normal (Added to total)
+    // MDL: EGB=Normal, LF=0, H=Subtracted from total
+    // MDWB: EGB=0, LF=0, H=Subtracted from total
 
     // 1. Calculate Sute Weight (Deduction in Kg)
     let suteWeightKg = 0;
@@ -247,7 +247,10 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
     const egbAmount = showEGB ? bags * egbNum : 0;
 
     // 7. Total Amount = Base Rate Amount (on Sute Net Weight) + Adjustments (on Original Weight)
-    const totalAmount = baseRateAmount + hAmount + bAmount + lfAmount + egbAmount;
+    // For MDL and MDWB: H is SUBTRACTED from total (negative contribution)
+    // For CDL and CDWB: H is ADDED to total (positive contribution)
+    const hContribution = ['MDL', 'MDWB'].includes(rateType) ? -hAmount : hAmount;
+    const totalAmount = baseRateAmount + hContribution + bAmount + lfAmount + egbAmount;
 
     // 8. Average Rate Calculation (per 75kg)
     const averageRate = (totalAmount / actualNetWeight) * 75;
