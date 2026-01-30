@@ -1624,10 +1624,29 @@ const Records: React.FC = () => {
     } else {
       // Open the form and fetch existing rate if any
       setExpandedRateRecordId(recordId);
+      
+      // IMPORTANT: Reset form to defaults FIRST before fetching
+      // This prevents old values from showing if the fetch fails
+      setRateFormData({
+        sute: '0',
+        suteCalculationMethod: 'per_bag',
+        baseRate: '',
+        baseRateCalculationMethod: 'per_bag',
+        rateType: 'CDL',
+        h: '0',
+        b: '0',
+        bCalculationMethod: 'per_bag',
+        lf: '0',
+        lfCalculationMethod: 'per_bag',
+        egb: '0',
+        hCalculationMethod: 'per_bag'
+      });
+      
       try {
         const response = await axios.get<{ purchaseRate: any }>(`/purchase-rates/${recordId}`);
         if (response.data.purchaseRate) {
           const rate = response.data.purchaseRate;
+          // Only update form if rate exists
           setRateFormData({
             sute: rate.sute?.toString() || '0',
             suteCalculationMethod: rate.suteCalculationMethod || 'per_bag',
@@ -1644,23 +1663,8 @@ const Records: React.FC = () => {
           });
         }
       } catch (error) {
-        // No existing rate, keep default values
-        console.log('No existing rate found');
-        // Explicitly reset to defaults for new entry
-        setRateFormData({
-          sute: '0',
-          suteCalculationMethod: 'per_bag',
-          baseRate: '',
-          baseRateCalculationMethod: 'per_bag',
-          rateType: 'CDL',
-          h: '0',
-          b: '0',
-          bCalculationMethod: 'per_bag',
-          lf: '0',
-          lfCalculationMethod: 'per_bag',
-          egb: '0',
-          hCalculationMethod: 'per_bag'
-        });
+        // No existing rate found - form already reset to defaults above
+        console.log('No existing rate found, using default values');
       }
     }
   };

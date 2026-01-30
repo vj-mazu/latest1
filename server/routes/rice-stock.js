@@ -86,20 +86,43 @@ router.get('/', auth, async (req, res) => {
         });
 
         // -------------------------------------------------------------------------
-        // UPDATED: Fetch Rice Stock Movements with Standardized Variety Format
+        // SECURITY FIX: Use parameterized queries to prevent SQL injection
+        // PERFORMANCE: Parameterized queries also enable query plan caching
         // -------------------------------------------------------------------------
+        const { QueryTypes } = require('sequelize');
+        const replacements = {};
         const movementWhereParts = ["rsm.status = 'approved'"];
+        
+        // Month-wise filtering with parameterization
         if (month) {
             const [year, monthNum] = month.split('-');
-            const startDate = `${year}-${monthNum}-01`;
+            const startDate = `${year}-${monthNum.padStart(2, '0')}-01`;
             const endDate = new Date(parseInt(year), parseInt(monthNum), 0).toISOString().split('T')[0];
-            movementWhereParts.push(`rsm.date >= '${startDate}' AND rsm.date <= '${endDate}'`);
+            movementWhereParts.push('rsm.date >= :startDate AND rsm.date <= :endDate');
+            replacements.startDate = startDate;
+            replacements.endDate = endDate;
         } else if (dateFrom || dateTo) {
-            if (dateFrom) movementWhereParts.push(`rsm.date >= '${dateFrom}'`);
-            if (dateTo) movementWhereParts.push(`rsm.date <= '${dateTo}'`);
+            if (dateFrom) {
+                movementWhereParts.push('rsm.date >= :dateFrom');
+                replacements.dateFrom = dateFrom;
+            }
+            if (dateTo) {
+                movementWhereParts.push('rsm.date <= :dateTo');
+                replacements.dateTo = dateTo;
+            }
         }
-        if (productType) movementWhereParts.push(`rsm.product_type = '${productType}'`);
-        if (locationCode) movementWhereParts.push(`rsm.location_code = '${locationCode}'`);
+        
+        // Product type filtering with parameterization
+        if (productType) {
+            movementWhereParts.push('rsm.product_type = :productType');
+            replacements.productType = productType;
+        }
+        
+        // Location code filtering with parameterization
+        if (locationCode) {
+            movementWhereParts.push('rsm.location_code = :locationCode');
+            replacements.locationCode = locationCode;
+        }
 
         const [movements] = await sequelize.query(`
             SELECT 
@@ -142,7 +165,10 @@ router.get('/', auth, async (req, res) => {
             LEFT JOIN outturns o ON rsm.outturn_id = o.id
             WHERE ${movementWhereParts.join(' AND ')}
             ORDER BY rsm.date ASC, rsm.created_at ASC
-        `);
+        `, {
+            replacements,
+            type: QueryTypes.SELECT
+        });
 
 
         // Helper function for consistent string normalization

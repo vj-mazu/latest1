@@ -108,8 +108,8 @@ router.get('/arrivals', auth, async (req, res) => {
       console.log(`📅 showAll=true or search provided: Skipping default date limit`);
     }
 
-    // Safety limit: Default to 2000 if no limit provided, max 5000
-    const limitNum = limit ? Math.min(parseInt(limit), 5000) : 2000;
+    // Safety limit: Default to 500 if no limit provided, max 1000 (reduced from 5000 for better performance)
+    const limitNum = limit ? Math.min(parseInt(limit), 1000) : 500;
 
     const rows = await Arrival.findAll({
       where,
