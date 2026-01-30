@@ -23,6 +23,7 @@ const calculateKunchinintuAverageRate = async (kunchinintuId) => {
     }
 
     // Get all approved purchase records for this kunchinittu with rates
+    // Use raw: false to ensure we get fresh data from database
     const purchaseRecords = await Arrival.findAll({
       where: {
         toKunchinintuId: kunchinintuId,
@@ -37,7 +38,10 @@ const calculateKunchinintuAverageRate = async (kunchinintuId) => {
           attributes: ['totalAmount', 'averageRate'],
           required: true // Only include records that have rates
         }
-      ]
+      ],
+      // Force fresh data from database, bypass any caching
+      raw: false,
+      nest: true
     });
 
     console.log(`📊 Found ${purchaseRecords.length} purchase records with rates for kunchinittu ${kunchinintuId}`);
@@ -67,6 +71,8 @@ const calculateKunchinintuAverageRate = async (kunchinintuId) => {
       id: r.id,
       netWeight: r.netWeight,
       totalAmount: r.purchaseRate?.totalAmount,
+      averageRate: r.purchaseRate?.averageRate,
+      updatedAt: r.purchaseRate?.updatedAt,
       hasRate: !!r.purchaseRate
     })));
 
@@ -249,7 +255,8 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
     // 7. Total Amount = Base Rate Amount (on Sute Net Weight) + Adjustments (on Original Weight)
     // For MDL and MDWB: H is SUBTRACTED from total (negative contribution)
     // For CDL and CDWB: H is ADDED to total (positive contribution)
-    const hContribution = ['MDL', 'MDWB'].includes(rateType) ? -hAmount : hAmount;
+    // Use Math.abs to ensure H is always treated as positive value, then negate for MDL/MDWB
+    const hContribution = ['MDL', 'MDWB'].includes(rateType) ? -Math.abs(hAmount) : Math.abs(hAmount);
     const totalAmount = baseRateAmount + hContribution + bAmount + lfAmount + egbAmount;
 
     // 8. Average Rate Calculation (per 75kg)
@@ -293,6 +300,10 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
 
     if (existingRate) {
       // Update existing rate
+      console.log(`📝 Updating existing rate for arrival ${arrivalId}`);
+      console.log(`   Old Total Amount: ₹${existingRate.totalAmount}`);
+      console.log(`   New Total Amount: ₹${parseFloat(totalAmount.toFixed(2))}`);
+      
       await existingRate.update({
         sute: suteNum,
         suteCalculationMethod,
@@ -312,8 +323,10 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
         updatedBy: req.user.userId
       });
       purchaseRate = existingRate;
+      console.log(`✅ Rate updated successfully`);
     } else {
       // Create new rate
+      console.log(`✨ Creating new rate for arrival ${arrivalId}`);
       purchaseRate = await PurchaseRate.create({
         arrivalId,
         sute: suteNum,
@@ -334,6 +347,7 @@ router.post('/', auth, authorize('manager', 'admin'), async (req, res) => {
         createdBy: req.user.userId
       });
       created = true;
+      console.log(`✅ Rate created successfully`);
     }
 
     // Fetch the complete record with associations

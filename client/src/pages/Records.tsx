@@ -9733,8 +9733,12 @@ const Records: React.FC = () => {
                                             const showEGB = ['CDL', 'MDL'].includes(rateFormData.rateType);
                                             const egbAmount = showEGB ? bags * parseFloat(rateFormData.egb || '0') : 0;
 
-                                            // 6. Total = Base Amount + All Adjustments
-                                            const totalAmount = baseRateAmount + hAmount + bAmount + lfAmount + egbAmount;
+                                            // 6. H Contribution (MDL and MDWB: H is SUBTRACTED)
+                                            // Use Math.abs to ensure H is always treated as positive, then negate for MDL/MDWB
+                                            const hContribution = ['MDL', 'MDWB'].includes(rateFormData.rateType) ? -Math.abs(hAmount) : Math.abs(hAmount);
+
+                                            // 7. Total = Base Amount + All Adjustments
+                                            const totalAmount = baseRateAmount + hContribution + bAmount + lfAmount + egbAmount;
                                             return totalAmount.toFixed(2);
                                           })()}
                                         </RateCalcValue>
