@@ -309,7 +309,7 @@ router.post('/bulk', auth, async (req, res) => {
         
         // Find the rice hamali rate ID based on work type and detail
         const [rateResult] = await sequelize.query(`
-          SELECT id, rate_21_24 FROM rice_hamali_rates 
+          SELECT id, rate_24_27 FROM rice_hamali_rates 
           WHERE work_type = :workType AND work_detail = :workDetail AND is_active = true
           LIMIT 1
         `, {
@@ -322,7 +322,7 @@ router.post('/bulk', auth, async (req, res) => {
         }
 
         const riceHamaliRateId = rateResult[0].id;
-        const actualRate = rateResult[0].rate_21_24;
+        const actualRate = rateResult[0].rate_24_27;
 
         console.log(`    Found rate ID: ${riceHamaliRateId}, Rate: ₹${actualRate}`);
 
@@ -332,13 +332,15 @@ router.post('/bulk', auth, async (req, res) => {
             rice_stock_movement_id,
             entry_type,
             rice_hamali_rate_id, 
-            bags, 
+            bags,
+            rate,
+            amount,
             remarks,
             is_active,
             created_by,
             created_at,
             updated_at
-          ) VALUES (:riceProductionId, :stockMovementId, :entryType, :riceHamaliRateId, :bags, :remarks, true, :createdBy, NOW(), NOW())
+          ) VALUES (:riceProductionId, :stockMovementId, :entryType, :riceHamaliRateId, :bags, :rate, :amount, :remarks, true, :createdBy, NOW(), NOW())
           RETURNING *
         `, {
           replacements: {
@@ -347,6 +349,8 @@ router.post('/bulk', auth, async (req, res) => {
             entryType: isStockMovement ? movementType : 'production',
             riceHamaliRateId,
             bags,
+            rate: actualRate,
+            amount: bags * actualRate,
             remarks: `${workerName ? `Worker: ${workerName}, ` : ''}${batchNumber ? `Batch: ${batchNumber}, ` : ''}${movementType ? `Type: ${movementType}, ` : ''}Rate: ₹${rate}`,
             createdBy: req.user.userId
           },

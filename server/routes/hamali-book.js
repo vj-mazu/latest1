@@ -113,8 +113,10 @@ router.get('/', auth, async (req, res) => {
                 END as workDetail,
                 
                 rhe.bags,
-                rhr.rate_24_27 as rateperbag,
-                (rhe.bags * rhr.rate_24_27) as totalamount,
+                -- FIXED: Use stored rate and amount from entry (not from rates table)
+                -- This ensures historical rates remain accurate even when rates are updated
+                rhe.rate as rateperbag,
+                rhe.amount as totalamount,
                 COALESCE(rhe.remarks, '') as remarks,
                 rhe.entry_type,
                 rhe.created_at as createdAt,

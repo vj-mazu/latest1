@@ -49,6 +49,24 @@ const RiceHamaliEntry = sequelize.define('RiceHamaliEntry', {
       isInt: true
     }
   },
+  rate: {
+    type: DataTypes.DECIMAL(10, 2),
+    allowNull: false,
+    validate: {
+      min: 0,
+      isDecimal: true
+    },
+    comment: 'Rate per bag at time of entry (snapshot from rice_hamali_rates)'
+  },
+  amount: {
+    type: DataTypes.DECIMAL(10, 2),
+    allowNull: false,
+    validate: {
+      min: 0,
+      isDecimal: true
+    },
+    comment: 'Total amount at time of entry (bags * rate)'
+  },
   remarks: {
     type: DataTypes.TEXT,
     allowNull: true
