@@ -533,7 +533,7 @@ const HamaliBookSimple: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `hamali-book-${selectedDate}.html`;
+    link.download = `${activeTab}-hamali-book-${selectedDate}.html`;
     
     // Trigger download
     document.body.appendChild(link);
@@ -640,8 +640,14 @@ const HamaliBookSimple: React.FC = () => {
             padding-right: 10px;
           }
           
+          .print-variety-info {
+            font-size: 10px;
+            color: #666;
+            margin-top: 2px;
+          }
+          
           .print-splits {
-            width: 200px;
+            width: 250px;
             text-align: right;
             font-size: 10px;
             color: #666;
@@ -662,6 +668,12 @@ const HamaliBookSimple: React.FC = () => {
             vertical-align: top;
             padding: 2px 5px;
           }
+          
+          .print-batch-totals {
+            font-size: 11px;
+            color: #666;
+            margin-top: 5px;
+          }
         }
         
         @media screen {
@@ -681,12 +693,13 @@ const HamaliBookSimple: React.FC = () => {
     let contentHTML = `
       <div class="print-container">
         <div class="print-header">
-          <h1 class="print-title">Hamali Book Summary</h1>
+          <h1 class="print-title">${activeTab === 'paddy' ? 'Paddy Hamali' : 'Rice Hamali'} Book Summary - RATE FIX APPLIED</h1>
           <div class="print-date">${formatDate(selectedDate)}</div>
         </div>
     `;
     
-    if (summary) {
+    // PADDY HAMALI PDF
+    if (activeTab === 'paddy' && summary) {
       // Add paddy hamali sections
       const paddySections = [
         { entries: summary.loadingEntries, title: 'Paddy Loading' },
@@ -750,13 +763,96 @@ const HamaliBookSimple: React.FC = () => {
       `;
     }
     
+    // RICE HAMALI PDF
+    if (activeTab === 'rice' && riceHamaliSummary) {
+      // Add rice hamali sections - grouped by work type
+      if (riceHamaliSummary.riceHamaliEntries && Object.keys(riceHamaliSummary.riceHamaliEntries).length > 0) {
+        Object.entries(riceHamaliSummary.riceHamaliEntries).forEach(([workType, entries]: [string, any]) => {
+          if (entries && entries.length > 0) {
+            contentHTML += `
+              <div class="print-section">
+                <div class="print-section-title">${workType}:</div>
+            `;
+            
+            entries.forEach((entry: any) => {
+              const rate = entry.ratePerBag || entry.rateperbag || (entry.totalAmount / entry.bags) || 0;
+              const varietyInfo = `Variety: ${entry.variety} | Location: ${entry.location}${entry.billNumber ? ` | Bill: ${entry.billNumber}` : ''}${entry.lorryNumber ? ` | Lorry: ${entry.lorryNumber}` : ''}${entry.productType ? ` | Type: ${entry.productType}` : ''}`;
+              
+              contentHTML += `
+                <div class="print-entry">
+                  <div class="print-amount">₹${entry.totalAmount.toFixed(0)}</div>
+                  <div class="print-details">
+                    ${entry.bags} Bags - ${entry.workDetail}
+                    <div class="print-variety-info">${varietyInfo}</div>
+                  </div>
+                  <div class="print-splits">
+                    Batch ${entry.batchNumber || 1}: 🎯 ${entry.workerName}: ${entry.bags} bags × ₹${rate.toFixed(2)} = ₹${entry.totalAmount.toFixed(0)} 🎯
+                  </div>
+                </div>
+              `;
+            });
+            
+            contentHTML += `</div>`;
+          }
+        });
+      }
+      
+      // Add other rice hamali works
+      if (riceHamaliSummary.otherHamaliEntries && Object.keys(riceHamaliSummary.otherHamaliEntries).length > 0) {
+        contentHTML += `
+          <div class="print-section">
+            <div class="print-section-title">Other Rice Work:</div>
+        `;
+        
+        Object.entries(riceHamaliSummary.otherHamaliEntries).forEach(([workType, entries]: [string, any]) => {
+          entries.forEach((entry: any) => {
+            const rate = entry.ratePerBag || entry.rateperbag || (entry.totalAmount / entry.bags) || 0;
+            const varietyInfo = `Variety: ${entry.variety} | Location: ${entry.location}`;
+            
+            contentHTML += `
+              <div class="print-entry">
+                <div class="print-amount">₹${entry.totalAmount.toFixed(0)}</div>
+                <div class="print-details">
+                  ${entry.bags} Bags - ${entry.workDetail}
+                  <div class="print-variety-info">${varietyInfo}</div>
+                </div>
+                <div class="print-splits">
+                  Batch ${entry.batchNumber || 1}: 🎯 ${entry.workerName}: ${entry.bags} bags × ₹${rate.toFixed(2)} = ₹${entry.totalAmount.toFixed(0)} 🎯
+                </div>
+              </div>
+            `;
+          });
+        });
+        
+        contentHTML += `</div>`;
+      }
+      
+      // Calculate batch totals for rice hamali
+      const batchTotals = calculateRiceBatchTotals(riceHamaliSummary);
+      const batchTotalsText = Object.entries(batchTotals)
+        .map(([batch, total]) => `${batch}: ₹${total.toFixed(0)}`)
+        .join(', ');
+      
+      // Add total
+      contentHTML += `
+        <div class="print-total">
+          <div class="print-amount">₹${riceHamaliSummary.grandTotal.toFixed(0)}</div>
+          <div class="print-details">
+            Total
+            ${batchTotalsText ? `<div class="print-batch-totals">${batchTotalsText}, Total: ₹${riceHamaliSummary.grandTotal.toFixed(0)}</div>` : ''}
+          </div>
+          <div class="print-splits"></div>
+        </div>
+      `;
+    }
+    
     contentHTML += `</div>`;
     
     return `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Hamali Book Summary - ${formatDate(selectedDate)}</title>
+        <title>${activeTab === 'paddy' ? 'Paddy' : 'Rice'} Hamali Book Summary - ${formatDate(selectedDate)}</title>
         <meta charset="UTF-8">
         ${printStyles}
       </head>
