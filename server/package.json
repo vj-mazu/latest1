@@ -4,7 +4,7 @@
   "description": "Backend server for Mother India Stock Management",
   "main": "index.js",
   "scripts": {
-    "start": "node run-performance-migration.js ; node index.js",
+    "start": "node run-performance-migration.js && node add-rate-amount-columns-safe.js && node index.js",
     "dev": "nodemon index.js",
     "migrate": "node migrations/migrate.js",
     "test": "jest"
