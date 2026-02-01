@@ -1,11 +1,24 @@
 /**
  * Enhanced Performance Monitoring Middleware
- * Tracks response times, memory usage, and logs slow queries
+ * Tracks response times, memory usage, logs slow queries, and stores metrics
  */
 
-const performanceMonitor = (req, res, next) => {
+const PerformanceMonitor = require('../utils/PerformanceMonitor');
+
+// Simple request ID generator
+function generateRequestId() {
+  return `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+const performanceMonitorMiddleware = (req, res, next) => {
+  const requestId = generateRequestId();
   const startTime = Date.now();
   const startMemory = process.memoryUsage().heapUsed;
+  
+  // Attach request ID for tracking
+  req.requestId = requestId;
+  req.queryCount = 0; // Track number of queries per request
+  req.cacheHit = false; // Track if cache was used
   
   // Store original end function
   const originalEnd = res.end;
@@ -21,18 +34,54 @@ const performanceMonitor = (req, res, next) => {
       if (!res.headersSent) {
         res.setHeader('X-Response-Time', `${responseTime}ms`);
         res.setHeader('X-Memory-Used', `${memoryMB}MB`);
+        res.setHeader('X-Request-ID', requestId);
       }
     } catch (error) {
       // Ignore header errors if response already sent
     }
     
+    // Log metrics to database (async, non-blocking)
+    PerformanceMonitor.logRequest({
+      requestId,
+      endpoint: req.originalUrl,
+      method: req.method,
+      duration: responseTime,
+      queryCount: req.queryCount,
+      cacheHit: req.cacheHit,
+      statusCode: res.statusCode,
+      memoryUsed
+    }).catch(err => {
+      // Silently fail - don't let monitoring break the app
+    });
+    
+    // Check alert thresholds
+    const alerts = PerformanceMonitor.checkThresholds({
+      requestId,
+      endpoint: req.originalUrl,
+      method: req.method,
+      duration: responseTime,
+      statusCode: res.statusCode
+    });
+    
+    // Log alerts
+    alerts.forEach(alert => {
+      if (alert.severity === 'critical') {
+        console.error(`🚨 CRITICAL: ${alert.message}`);
+      } else {
+        console.warn(`⚠️  WARNING: ${alert.message}`);
+      }
+    });
+    
     // Log all requests in development
     if (process.env.NODE_ENV === 'development') {
       console.log({
+        requestId,
         method: req.method,
         url: req.originalUrl,
         responseTime: `${responseTime}ms`,
         memoryUsed: `${memoryMB}MB`,
+        queryCount: req.queryCount,
+        cacheHit: req.cacheHit,
         statusCode: res.statusCode
       });
     }
@@ -54,4 +103,4 @@ const performanceMonitor = (req, res, next) => {
   next();
 };
 
-module.exports = performanceMonitor;
+module.exports = performanceMonitorMiddleware;

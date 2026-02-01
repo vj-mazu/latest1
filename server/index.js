@@ -28,6 +28,7 @@ const riceHamaliRatesRoutes = require('./routes/riceHamaliRates');
 const riceHamaliEntriesRoutes = require('./routes/riceHamaliEntries');
 const riceHamaliEntriesSimpleRoutes = require('./routes/riceHamaliEntriesSimple');
 const metricsRoutes = require('./routes/metrics');
+const performanceMetricsRoutes = require('./routes/performance-metrics');
 const riceStockRoutes = require('./routes/rice-stock');
 const riceStockManagementRoutes = require('./routes/riceStockManagement');
 const riceStockVarietiesRoutes = require('./routes/rice-stock-varieties');
@@ -136,6 +137,7 @@ app.use('/api/rice-hamali-entries-simple', riceHamaliEntriesSimpleRoutes);
 app.use('/api/other-hamali-works', require('./routes/otherHamaliWorks'));
 app.use('/api/other-hamali-entries', require('./routes/otherHamaliEntries'));
 app.use('/api/metrics', metricsRoutes);
+app.use('/api/performance-metrics', performanceMetricsRoutes);
 app.use('/api/rice-stock', riceStockRoutes);
 app.use('/api/rice-stock-management', riceStockManagementRoutes);
 app.use('/api', riceStockVarietiesRoutes); // Rice stock varieties API endpoints
@@ -939,6 +941,23 @@ const startServer = async () => {
         }
       } catch (error) {
         console.log('⚠️ Migration 63 warning:', error.message);
+      }
+
+      // Migration 64: Create performance metrics table
+      try {
+        const createPerformanceMetricsTable = require('./migrations/64_create_performance_metrics_table');
+        await createPerformanceMetricsTable.up();
+        console.log('✅ Migration 64: Performance metrics table created');
+      } catch (error) {
+        console.log('⚠️ Migration 64 warning:', error.message);
+      }
+
+      // Migration 65: Add comprehensive performance indexes
+      try {
+        const addComprehensivePerformanceIndexes = require('./migrations/65_add_comprehensive_performance_indexes');
+        await addComprehensivePerformanceIndexes.up();
+      } catch (error) {
+        console.log('⚠️ Migration 65 warning:', error.message);
       }
 
       // Auto-fix: RJ Broken and Rejection Rice product types
