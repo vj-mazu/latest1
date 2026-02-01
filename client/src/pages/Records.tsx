@@ -3696,55 +3696,7 @@ const Records: React.FC = () => {
                                   </button>
                                 )}
 
-                                {/* Rice Hamali Button - Show for ALL approved entries */}
-                                {item.status === 'approved' && (
-                                  <button
-                                    onClick={() => {
-                                      const riceHamaliId = item.id?.toString();
-                                      console.log('🔍 Rice Hamali button clicked for:', {
-                                        id: item.id,
-                                        movementType: item.movementType,
-                                        riceHamaliId
-                                      });
-
-                                      if (expandedRiceHamaliRecordId === riceHamaliId) {
-                                        setExpandedRiceHamaliRecordId(null);
-                                      } else {
-                                        setExpandedRiceHamaliRecordId(riceHamaliId);
-                                      }
-                                    }}
-                                    style={{
-                                      padding: '4px 8px',
-                                      backgroundColor: (riceHamaliEntries[item.id] && Array.isArray(riceHamaliEntries[item.id]) && riceHamaliEntries[item.id].length > 0) ? '#059669' : '#10b981',
-                                      color: 'white',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      cursor: 'pointer',
-                                      fontSize: '0.75rem',
-                                      fontWeight: 'bold'
-                                    }}
-                                    title={(riceHamaliEntries[item.id] && Array.isArray(riceHamaliEntries[item.id]) && riceHamaliEntries[item.id].length > 0) ? "View Rice Hamali" : "Add Rice Hamali"}
-                                  >
-                                    {(riceHamaliEntries[item.id] && Array.isArray(riceHamaliEntries[item.id]) && riceHamaliEntries[item.id].length > 0) ? '✓' : '+'} 🍚 Hamali
-                                  </button>
-                                )}
-
-                                {/* Hamali Status Indicator */}
-                                {riceHamaliEntries[item.id] && riceHamaliEntries[item.id].length > 0 && (
-                                  <span
-                                    style={{
-                                      padding: '2px 6px',
-                                      backgroundColor: '#dcfce7',
-                                      color: '#16a34a',
-                                      borderRadius: '12px',
-                                      fontSize: '0.7rem',
-                                      fontWeight: 'bold'
-                                    }}
-                                    title={`${riceHamaliEntries[item.id].length} rice hamali entries`}
-                                  >
-                                    ✓ {riceHamaliEntries[item.id].length}
-                                  </span>
-                                )}
+                                {/* Rice Hamali button removed as per user request */}
                               </div>
                             </td>
                           )}
@@ -9155,57 +9107,7 @@ const Records: React.FC = () => {
                                         </IconButton>
                                       )}
 
-                                    {/* Paddy Hamali Button - FIXED: Use paddyHamaliEntries with OLD system structure */}
-                                    {record.status === 'approved' && (
-                                      <IconButton
-                                        className={(paddyHamaliEntries[record.id] && (
-                                          paddyHamaliEntries[record.id].hasLoadingHamali ||
-                                          paddyHamaliEntries[record.id].hasUnloadingHamali ||
-                                          paddyHamaliEntries[record.id].hasLooseTumbiddu
-                                        )) ? "approve" : "edit"}
-                                        onClick={() => setExpandedHamaliRecordId(expandedHamaliRecordId === record.id ? null : record.id)}
-                                        title={(paddyHamaliEntries[record.id] && (
-                                          paddyHamaliEntries[record.id].hasLoadingHamali ||
-                                          paddyHamaliEntries[record.id].hasUnloadingHamali ||
-                                          paddyHamaliEntries[record.id].hasLooseTumbiddu
-                                        )) ? "View Paddy Hamali" : "Add Paddy Hamali"}
-                                        style={{
-                                          background: (paddyHamaliEntries[record.id] && (
-                                            paddyHamaliEntries[record.id].hasLoadingHamali ||
-                                            paddyHamaliEntries[record.id].hasUnloadingHamali ||
-                                            paddyHamaliEntries[record.id].hasLooseTumbiddu
-                                          )) ? '#10b981' : '#f59e0b',
-                                          color: 'white',
-                                          fontSize: '0.8rem',
-                                          padding: '0.25rem 0.5rem',
-                                          marginRight: '0.25rem'
-                                        }}
-                                      >
-                                        {(paddyHamaliEntries[record.id] && (
-                                          paddyHamaliEntries[record.id].hasLoadingHamali ||
-                                          paddyHamaliEntries[record.id].hasUnloadingHamali ||
-                                          paddyHamaliEntries[record.id].hasLooseTumbiddu
-                                        )) ? '✓' : '+'} 🌾
-                                      </IconButton>
-                                    )}
-
-                                    {/* Palti Button - Logic from user request */}
-                                    {record.status === 'approved' && (
-                                      <IconButton
-                                        className={expandedPaltiRecordId === record.id ? "approve" : "edit"}
-                                        onClick={() => setExpandedPaltiRecordId(expandedPaltiRecordId === record.id ? null : record.id)}
-                                        title="Palti Conversion"
-                                        style={{
-                                          background: expandedPaltiRecordId === record.id ? '#10b981' : '#f59e0b',
-                                          color: 'white',
-                                          fontSize: '0.8rem',
-                                          padding: '0.25rem 0.5rem',
-                                          marginRight: '0.25rem'
-                                        }}
-                                      >
-                                        🔄 Palti
-                                      </IconButton>
-                                    )}
+                                    {/* Paddy Hamali and Palti buttons removed as per user request */}
 
                                     {/* Delete button - Only for Manager/Admin on approved records */}
                                     {(record.status === 'approved' || record.status === 'admin-approved') &&

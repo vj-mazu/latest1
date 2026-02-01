@@ -960,6 +960,14 @@ const startServer = async () => {
         console.log('⚠️ Migration 65 warning:', error.message);
       }
 
+      // Migration 66: Fix performance indexes with correct column names
+      try {
+        const fixPerformanceIndexes = require('./migrations/66_fix_performance_indexes_correct_columns');
+        await fixPerformanceIndexes.up(sequelize.getQueryInterface());
+      } catch (error) {
+        console.log('⚠️ Migration 66 warning:', error.message);
+      }
+
       // Auto-fix: RJ Broken and Rejection Rice product types
       try {
         console.log('🔄 Auto-fixing product types (RJ Broken, Rejection Rice)...');
