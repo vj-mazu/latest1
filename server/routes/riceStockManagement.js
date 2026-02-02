@@ -1146,7 +1146,7 @@ router.post('/movements', auth, async (req, res) => {
                     replacements: { outturnId: parseInt(outturnId) },
                     type: sequelize.QueryTypes.SELECT
                 });
-                
+
                 if (outturnResult && outturnResult.standardized_variety) {
                     finalVariety = outturnResult.standardized_variety;
                     console.log(`✅ Variety standardized from outturn ${outturnId}: ${finalVariety}`);
@@ -1731,7 +1731,7 @@ router.post('/movements', auth, async (req, res) => {
                 bags: parseInt(finalBags),
                 bagSizeKg: finalPackagingKg ? parseFloat(finalPackagingKg) : 26,
                 quantityQuintals: parseFloat(finalQuantityQuintals),
-                packagingId: movementType === 'palti' 
+                packagingId: movementType === 'palti'
                     ? null  // ✅ Set to NULL for palti - rely on source_packaging_id + target_packaging_id
                     : ((packagingId || targetPackagingId) ? parseInt(packagingId || targetPackagingId) : null),
                 // Store source_bags for Palti operations (original bags before conversion)
@@ -1817,30 +1817,38 @@ router.post('/movements', auth, async (req, res) => {
 router.put('/movements/:id', auth, async (req, res) => {
     try {
         const { id } = req.params;
+        console.log('📝 UPDATE rice stock movement request:', { id, body: req.body });
+
         const {
             date,
             movementType,
             productType,
             variety,
             bags,
+            sourceBags,
             quantityQuintals,
+            packagingId,
             packagingBrand,
             packagingKg,
+            bagSizeKg,
             locationCode,
             fromLocation,
             toLocation,
             billNumber,
             lorryNumber,
-            sourcePackagingBrand,
-            sourcePackagingKg,
-            targetPackagingBrand,
-            targetPackagingKg,
+            sourcePackagingId,
+            targetPackagingId,
+            shortageKg,
+            shortageBags,
             status
         } = req.body;
 
-        // Check if movement exists and get its status
+        // Check if movement exists and get its current data
         const existing = await sequelize.query(`
-            SELECT id, status FROM rice_stock_movements WHERE id = :id
+            SELECT id, status, movement_type, product_type, location_code, bags, 
+                   packaging_id, source_packaging_id, target_packaging_id, variety,
+                   from_location, to_location, date
+            FROM rice_stock_movements WHERE id = :id
         `, {
             replacements: { id },
             type: sequelize.QueryTypes.SELECT
@@ -1853,7 +1861,16 @@ router.put('/movements/:id', auth, async (req, res) => {
             });
         }
 
-        const currentStatus = existing[0].status;
+        const currentMovement = existing[0];
+        const currentStatus = currentMovement.status;
+        const finalMovementType = movementType || currentMovement.movement_type;
+        const finalProductType = productType || currentMovement.product_type;
+        const finalLocationCode = locationCode || currentMovement.location_code;
+        const finalBags = bags || currentMovement.bags;
+        const finalVariety = variety || currentMovement.variety;
+        const finalPackagingId = packagingId || currentMovement.packaging_id;
+        const finalSourcePackagingId = sourcePackagingId || currentMovement.source_packaging_id;
+        const finalTargetPackagingId = targetPackagingId || currentMovement.target_packaging_id;
 
         // Status check - Admins can bypass the 'approved' block
         if (currentStatus === 'approved' && req.user.role !== 'admin') {
@@ -1863,7 +1880,284 @@ router.put('/movements/:id', auth, async (req, res) => {
             });
         }
 
-        // Update movement
+        // =====================================================
+        // VALIDATION SECTION - Same rules as POST endpoint
+        // =====================================================
+
+        // Basic required fields validation
+        if (!finalProductType) {
+            return res.status(400).json({
+                success: false,
+                error: 'Product type is required'
+            });
+        }
+
+        if (!finalLocationCode) {
+            return res.status(400).json({
+                success: false,
+                error: 'Location code is required'
+            });
+        }
+
+        if (!finalBags || finalBags <= 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Bags must be greater than 0'
+            });
+        }
+
+        // Movement type specific validation
+        const validMovementTypes = ['purchase', 'sale', 'palti'];
+        if (!validMovementTypes.includes(finalMovementType)) {
+            return res.status(400).json({
+                success: false,
+                error: `Invalid movement type. Must be one of: ${validMovementTypes.join(', ')}`
+            });
+        }
+
+        // =====================================================
+        // SALE VALIDATION
+        // =====================================================
+        if (finalMovementType === 'sale') {
+            // Packaging is required for sale
+            if (!finalPackagingId && !packagingBrand) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Packaging selection is required for sale operations',
+                    details: 'Please select a packaging before updating a sale'
+                });
+            }
+
+            // Stock availability check for sale (skip if only status change)
+            if (bags || productType || locationCode || variety || packagingId) {
+                try {
+                    console.log('🔍 Validating sale stock availability during edit...');
+
+                    // Resolve packaging ID if only brand name provided
+                    let salePackagingId = finalPackagingId;
+                    if (!salePackagingId && packagingBrand) {
+                        const [pkgResult] = await sequelize.query(`
+                            SELECT id FROM packagings WHERE "brandName" = :brandName LIMIT 1
+                        `, { replacements: { brandName: packagingBrand }, type: sequelize.QueryTypes.SELECT });
+                        if (pkgResult) salePackagingId = pkgResult.id;
+                    }
+
+                    const LocationBifurcationService = require('../services/LocationBifurcationService');
+                    const validation = await LocationBifurcationService.validateSaleAfterPalti({
+                        locationCode: finalLocationCode,
+                        variety: finalVariety,
+                        productType: finalProductType,
+                        packagingId: salePackagingId ? Number.parseInt(salePackagingId) : null,
+                        packagingBrand: packagingBrand || null,
+                        bagSizeKg: bagSizeKg ? Number.parseFloat(bagSizeKg) : null,
+                        requestedBags: Number.parseInt(finalBags),
+                        saleDate: date || currentMovement.date,
+                        excludeMovementId: parseInt(id), // Exclude current movement from calculation
+                        debugMode: true
+                    });
+
+                    if (!validation.isValid) {
+                        console.log(`❌ Insufficient stock for sale edit: ${validation.message}`);
+                        return res.status(400).json({
+                            success: false,
+                            error: 'INSUFFICIENT_STOCK',
+                            message: validation.message,
+                            details: {
+                                location: finalLocationCode,
+                                productType: finalProductType,
+                                variety: finalVariety,
+                                openingStock: validation.openingStock,
+                                remainingStock: validation.remainingStock,
+                                requestedBags: validation.requestedBags,
+                                shortfall: validation.shortfall
+                            }
+                        });
+                    }
+                    console.log('✅ Sale stock validation passed during edit');
+                } catch (stockError) {
+                    console.error('⚠️ Sale stock validation error during edit:', stockError.message);
+                    // Log but don't block - allow edit to proceed
+                }
+            }
+        }
+
+        // =====================================================
+        // PALTI VALIDATION
+        // =====================================================
+        if (finalMovementType === 'palti') {
+            // Source and target packaging are required for palti
+            if (!finalSourcePackagingId) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Source packaging is required for palti operations',
+                    details: 'Please select the source packaging (FROM) before updating a palti'
+                });
+            }
+
+            if (!finalTargetPackagingId) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Target packaging is required for palti operations',
+                    details: 'Please select the target packaging (TO) before updating a palti'
+                });
+            }
+
+            // From and To locations are required for palti
+            const finalFromLocation = fromLocation || currentMovement.from_location;
+            const finalToLocation = toLocation || currentMovement.to_location;
+
+            if (!finalFromLocation) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'From location is required for palti operations'
+                });
+            }
+
+            if (!finalToLocation) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'To location is required for palti operations'
+                });
+            }
+
+            // Type conversion validation - can only convert within same category
+            if (productType && productType !== currentMovement.product_type) {
+                try {
+                    const { canConvertTypes, getProductTypeCategory } = require('../utils/productTypeCategories');
+                    const sourceType = currentMovement.product_type;
+                    const targetType = productType;
+
+                    if (!canConvertTypes(sourceType, targetType)) {
+                        const sourceCategory = getProductTypeCategory(sourceType);
+                        const targetCategory = getProductTypeCategory(targetType);
+
+                        return res.status(400).json({
+                            success: false,
+                            error: 'Invalid type conversion',
+                            details: {
+                                sourceType,
+                                sourceCategory,
+                                targetType,
+                                targetCategory,
+                                message: `Cannot convert ${sourceCategory} (${sourceType}) to ${targetCategory} (${targetType}). Only same-category conversions allowed.`,
+                                allowedConversions: {
+                                    'RICE → RICE': 'Rice, Rejection Rice, Unpolished, etc.',
+                                    'BROKEN → BROKEN': 'Sizer Broken, Rejection Broken, Zero Broken, etc.',
+                                    'BRAN → BRAN': 'Bran, Farm Bran',
+                                    'OTHER → OTHER': 'Faram, Farm'
+                                }
+                            }
+                        });
+                    }
+                    console.log(`✅ Type conversion validation passed: ${sourceType} → ${targetType}`);
+                } catch (typeError) {
+                    console.warn('⚠️ Type conversion check failed:', typeError.message);
+                }
+            }
+
+            // Stock availability check for palti (only if changing key fields)
+            if (bags || productType || locationCode || sourcePackagingId) {
+                try {
+                    console.log('🔍 Validating palti stock availability during edit...');
+
+                    // Get source packaging details
+                    const [sourcePackagingInfo] = await sequelize.query(
+                        `SELECT "brandName", "allottedKg" FROM packagings WHERE id = :sourcePackagingId`,
+                        { replacements: { sourcePackagingId: parseInt(finalSourcePackagingId) }, type: sequelize.QueryTypes.SELECT }
+                    );
+
+                    if (!sourcePackagingInfo) {
+                        return res.status(400).json({
+                            success: false,
+                            error: 'Source packaging not found'
+                        });
+                    }
+
+                    const sourcePackagingKgValue = parseFloat(sourcePackagingInfo.allottedKg || 26);
+                    const editSourceBags = sourceBags || finalBags;
+                    const reqQtls = (parseInt(editSourceBags) * sourcePackagingKgValue) / 100;
+
+                    // Check available stock (excluding current movement)
+                    const stockCheckResult = await sequelize.query(`
+                        SELECT COALESCE(SUM(CASE 
+                            WHEN movement_type IN ('production', 'purchase') AND packaging_id = :sourcePackagingId THEN quantity_quintals
+                            WHEN movement_type = 'sale' AND packaging_id = :sourcePackagingId THEN -quantity_quintals
+                            WHEN movement_type = 'palti' AND source_packaging_id = :sourcePackagingId THEN -quantity_quintals
+                            WHEN movement_type = 'palti' AND target_packaging_id = :sourcePackagingId THEN quantity_quintals
+                            ELSE 0
+                        END), 0) as available_qtls
+                        FROM rice_stock_movements 
+                        WHERE status = 'approved' 
+                          AND location_code = :locationCode
+                          AND product_type = :productType
+                          AND id != :excludeId
+                    `, {
+                        replacements: {
+                            sourcePackagingId: parseInt(finalSourcePackagingId),
+                            locationCode: finalLocationCode,
+                            productType: finalProductType,
+                            excludeId: parseInt(id)
+                        },
+                        type: sequelize.QueryTypes.SELECT
+                    });
+
+                    const availableQtls = parseFloat(stockCheckResult[0]?.available_qtls || 0);
+
+                    console.log('📊 Palti edit stock validation:', {
+                        availableQtls,
+                        requestedQtls: reqQtls,
+                        isValid: availableQtls >= reqQtls
+                    });
+
+                    if (availableQtls < reqQtls) {
+                        return res.status(400).json({
+                            success: false,
+                            error: `Insufficient ${finalProductType} stock at ${finalLocationCode}`,
+                            details: {
+                                productType: finalProductType,
+                                location: finalLocationCode,
+                                availableQtls: parseFloat(availableQtls.toFixed(2)),
+                                requestedQtls: parseFloat(reqQtls.toFixed(2)),
+                                shortfall: parseFloat((reqQtls - availableQtls).toFixed(2))
+                            }
+                        });
+                    }
+                    console.log('✅ Palti stock validation passed during edit');
+                } catch (stockError) {
+                    console.error('⚠️ Palti stock validation error during edit:', stockError.message);
+                    // Log but continue - don't block the edit
+                }
+            }
+        }
+
+        // =====================================================
+        // RESOLVE PACKAGING ID FROM BRAND NAME
+        // =====================================================
+        let resolvedPackagingId = packagingId || null;
+        let resolvedPackagingKg = bagSizeKg || packagingKg || null;
+
+        if (packagingBrand && !packagingId) {
+            try {
+                const packagingResult = await sequelize.query(`
+                    SELECT id, "allottedKg" FROM packagings WHERE "brandName" = :brandName LIMIT 1
+                `, {
+                    replacements: { brandName: packagingBrand },
+                    type: sequelize.QueryTypes.SELECT
+                });
+                if (packagingResult.length > 0) {
+                    resolvedPackagingId = packagingResult[0].id;
+                    if (!resolvedPackagingKg) {
+                        resolvedPackagingKg = packagingResult[0].allottedKg;
+                    }
+                }
+            } catch (error) {
+                console.warn('Could not resolve packaging brand:', packagingBrand, error.message);
+            }
+        }
+
+        // =====================================================
+        // UPDATE MOVEMENT
+        // =====================================================
         await sequelize.query(`
             UPDATE rice_stock_movements SET
                 date = COALESCE(:date, date),
@@ -1871,18 +2165,19 @@ router.put('/movements/:id', auth, async (req, res) => {
                 product_type = COALESCE(:productType, product_type),
                 variety = COALESCE(:variety, variety),
                 bags = COALESCE(:bags, bags),
+                source_bags = COALESCE(:sourceBags, source_bags),
+                bag_size_kg = COALESCE(:bagSizeKg, bag_size_kg),
                 quantity_quintals = COALESCE(:quantityQuintals, quantity_quintals),
-                packaging_brand = COALESCE(:packagingBrand, packaging_brand),
-                packaging_kg = COALESCE(:packagingKg, packaging_kg),
+                packaging_id = COALESCE(:packagingId, packaging_id),
                 location_code = COALESCE(:locationCode, location_code),
                 from_location = COALESCE(:fromLocation, from_location),
                 to_location = COALESCE(:toLocation, to_location),
                 bill_number = COALESCE(:billNumber, bill_number),
                 lorry_number = COALESCE(:lorryNumber, lorry_number),
-                source_packaging_brand = COALESCE(:sourcePackagingBrand, source_packaging_brand),
-                source_packaging_kg = COALESCE(:sourcePackagingKg, source_packaging_kg),
-                target_packaging_brand = COALESCE(:targetPackagingBrand, target_packaging_brand),
-                target_packaging_kg = COALESCE(:targetPackagingKg, target_packaging_kg),
+                source_packaging_id = COALESCE(:sourcePackagingId, source_packaging_id),
+                target_packaging_id = COALESCE(:targetPackagingId, target_packaging_id),
+                conversion_shortage_kg = COALESCE(:shortageKg, conversion_shortage_kg),
+                conversion_shortage_bags = COALESCE(:shortageBags, conversion_shortage_bags),
                 status = COALESCE(:status, status),
                 updated_at = NOW()
             WHERE id = :id
@@ -1894,22 +2189,25 @@ router.put('/movements/:id', auth, async (req, res) => {
                 productType: productType || null,
                 variety: variety || null,
                 bags: bags ? parseInt(bags) : null,
+                sourceBags: sourceBags ? parseInt(sourceBags) : null,
+                bagSizeKg: resolvedPackagingKg ? parseFloat(resolvedPackagingKg) : null,
                 quantityQuintals: quantityQuintals ? parseFloat(quantityQuintals) : null,
-                packagingBrand: packagingBrand || null,
-                packagingKg: packagingKg ? parseFloat(packagingKg) : null,
+                packagingId: resolvedPackagingId ? parseInt(resolvedPackagingId) : null,
                 locationCode: locationCode || null,
                 fromLocation: fromLocation || null,
                 toLocation: toLocation || null,
                 billNumber: billNumber || null,
                 lorryNumber: lorryNumber || null,
-                sourcePackagingBrand: sourcePackagingBrand || null,
-                sourcePackagingKg: sourcePackagingKg ? parseFloat(sourcePackagingKg) : null,
-                targetPackagingBrand: targetPackagingBrand || null,
-                targetPackagingKg: targetPackagingKg ? parseFloat(targetPackagingKg) : null,
+                sourcePackagingId: sourcePackagingId ? parseInt(sourcePackagingId) : null,
+                targetPackagingId: targetPackagingId ? parseInt(targetPackagingId) : null,
+                shortageKg: shortageKg !== undefined && shortageKg !== null ? parseFloat(shortageKg) : null,
+                shortageBags: shortageBags !== undefined && shortageBags !== null ? parseFloat(shortageBags) : null,
                 status: status || null
             },
             type: sequelize.QueryTypes.UPDATE
         });
+
+        console.log('✅ Rice stock movement updated successfully:', { id });
 
         // CRITICAL: Clear all rice stock related caches to ensure fresh data
         try {
@@ -1929,10 +2227,15 @@ router.put('/movements/:id', auth, async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('Error updating rice stock movement:', error);
+        console.error('❌ Error updating rice stock movement:', error);
+        console.error('Error details:', {
+            message: error.message,
+            name: error.name,
+            sql: error.sql || 'N/A'
+        });
         res.status(500).json({
             success: false,
-            error: 'Failed to update rice stock movement'
+            error: 'Failed to update rice stock movement: ' + error.message
         });
     }
 });
