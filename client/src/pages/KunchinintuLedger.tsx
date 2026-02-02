@@ -4,7 +4,7 @@ import axios from 'axios';
 import { toast } from '../utils/toast';
 import { useAuth } from '../contexts/AuthContext';
 import PaginationControls from '../components/PaginationControls';
-import { generateKunchinintuLedgerPDF } from '../utils/ledgerPdfGenerator';
+import { generateKunchinintuLedgerPDF, generateKunchinintuPortraitPDF } from '../utils/ledgerPdfGenerator';
 
 
 const Container = styled.div`
@@ -763,6 +763,77 @@ const KunchinintuLedger: React.FC = () => {
     }
   };
 
+  // Download PDF for a specific Kunchinittu (Portrait Mode)
+  const downloadKunchinintuPDF = (ledgerDataItem: LedgerData) => {
+    try {
+      const kunchi = ledgerDataItem.kunchinittu;
+      const transactions = ledgerDataItem.transactions || { inward: [], outward: [] };
+      const totals = ledgerDataItem.totals || {
+        inward: { bags: 0, netWeight: 0 },
+        outward: { bags: 0, netWeight: 0 },
+        remaining: { bags: 0, netWeight: 0 }
+      };
+
+      const pdfData = {
+        kunchinittu: {
+          id: kunchi.id,
+          code: kunchi.code,
+          name: kunchi.name,
+          warehouse: kunchi.warehouse,
+          variety: kunchi.variety,
+          averageRate: (kunchi as any).averageRate || 0
+        },
+        warehouse: kunchi.warehouse,
+        variety: kunchi.variety?.name || 'N/A',
+        averageRate: (kunchi as any).averageRate || 0,
+        summary: totals,
+        totals: totals,
+        inwardRecords: transactions.inward.map((r, idx) => ({
+          id: r.id,
+          slNo: (idx + 1).toString(),
+          date: r.date,
+          movementType: r.movementType,
+          broker: r.broker || '-',
+          variety: r.variety || kunchi.variety?.name || '-',
+          bags: r.bags || 0,
+          moisture: r.moisture,
+          cutting: r.cutting,
+          wbNo: r.wbNo || '-',
+          netWeight: r.netWeight || 0,
+          lorryNumber: r.lorryNumber || '-',
+          fromLocation: r.fromLocation || r.fromKunchinittu?.code || '-',
+          toLocation: r.toKunchinittu?.code || kunchi.code || '-',
+          fromKunchinittu: r.fromKunchinittu,
+          toKunchinittu: r.toKunchinittu
+        })),
+        outwardRecords: transactions.outward.map((r, idx) => ({
+          id: r.id,
+          slNo: (idx + 1).toString(),
+          date: r.date,
+          movementType: r.movementType,
+          broker: r.broker || '-',
+          variety: r.variety || kunchi.variety?.name || '-',
+          bags: r.bags || 0,
+          moisture: r.moisture,
+          cutting: r.cutting,
+          wbNo: r.wbNo || '-',
+          netWeight: r.netWeight || 0,
+          lorryNumber: r.lorryNumber || '-',
+          fromLocation: kunchi.code || '-',
+          toLocation: r.outturn?.code || r.toWarehouseShift?.code || '-',
+          outturn: r.outturn
+        })),
+        transactions: transactions
+      };
+
+      generateKunchinintuPortraitPDF(pdfData, { from: dateFrom, to: dateTo });
+      toast.success(`PDF downloaded for ${kunchi.code}`);
+    } catch (error: any) {
+      console.error('❌ PDF Download error:', error);
+      toast.error(`Failed to generate PDF: ${error.message}`);
+    }
+  };
+
   // Helper function to get warehouse name from transaction
   const getWarehouseName = (record: Transaction, isInward: boolean): string => {
     if (isInward) {
@@ -978,6 +1049,14 @@ const KunchinintuLedger: React.FC = () => {
                   </table>
                   {(user?.role === 'manager' || user?.role === 'admin') && (
                     <div style={{ display: 'flex', gap: '0.5rem', marginLeft: '1rem' }}>
+                      {/* PDF Download Button - Always visible */}
+                      <Button
+                        className="primary"
+                        onClick={() => downloadKunchinintuPDF(ledgerData)}
+                        style={{ background: '#6366f1', whiteSpace: 'nowrap' }}
+                      >
+                        📄 PDF
+                      </Button>
                       {/* Only show Add Loose when NOT closed */}
                       {!(ledgerData.kunchinittu as any).isClosed && (
                         <Button
